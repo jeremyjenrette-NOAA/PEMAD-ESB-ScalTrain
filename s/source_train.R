@@ -16,8 +16,8 @@ suppressPackageStartupMessages({
 # User settings
 # -----------------------------
 BASE_IMG_PATH <- "/home/jjenrette/HabcamDS2/data/habcam/proc/Images"
-YEAR          <- 2024
-SCALLOP_CLASS <- 185
+YEAR          <- 2022
+SCALLOP_CLASS = c(185, 515, 197, 207, 920, 213, 912, 916, 525, 919, 215, 915)
 
 # Option A: path to the year’s annotations text file (if you want script to load it)
 # (adjust delimiter/reader below as needed)
@@ -27,7 +27,7 @@ ANNOT_FILE <- NULL
 # Option B: if you already have `dat` in memory, leave ANNOT_FILE as NULL.
 AnnHeader=c("annotation_id","image_id","scope_id","category_id","geometry_text","thegeom","annotator_id","assignment_id","timestamp","class_id","deprecated","geometry_id","imagename","assignment_num","percent_cover","comment","source","data_identifier")
 Ann=read.table(file=paste0("../data/raw/annotations_",YEAR,".txt"), fill=TRUE,sep="\t",na.strings=c("\\N", NA),col.names=AnnHeader,stringsAsFactors =FALSE)
-dat_scallop = subset(Ann, class_id == SCALLOP_CLASS)
+dat_scallop = subset(Ann, class_id %in% SCALLOP_CLASS)
 
 # -----------------------------
 # Helpers
@@ -179,7 +179,7 @@ print(head(missing_tbl, 20))
 
 DEST_DIR <- "../data/raw"
 
-manifest <- file.path(DEST_DIR, "sources_2024tr.txt")
+manifest <- file.path(DEST_DIR, "sources_2022tr.txt")
 
 # Write source paths only (1 line per image)
 audit_year %>%
