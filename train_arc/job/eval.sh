@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J yolo_scal
+#SBATCH -J eval_yolo
 #SBATCH --account=sharkpulse
 #SBATCH --partition=a30_normal_q
 #SBATCH --nodes=1
@@ -7,54 +7,37 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=09:00:00
-#SBATCH --output=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/yolo_scal_%j.out
-#SBATCH --error=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/yolo_scal_%j.err
+#SBATCH --time=06:00:00
+#SBATCH --output=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/eval_yolo_%j.out
+#SBATCH --error=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/eval_yolo_%j.err
 
+# ─── Load modules ──────────────────────────────────────
 module reset
 module load Miniconda3/24.7.1-0
+# module load PyTorch/2.1.2-foss-2023a-CUDA-12.1.1
 
+# export PYTHONNOUSERSITE=1
+# unset PYTHONPATH
+# ─── Activate Conda environment ────────────────────────
 source ~/.bashrc
 cd /projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/
 conda activate scallopdet
 export PYTORCH_ALLOC_CONF=expandable_segments:True
-############################################################
-YEAR=2022
+# ─── Run training ───────────────────────────────────────
+YEAR=11
 MODEL=check/yolo11n.pt
-LABEL=scallop
-############################################################
+JOB=241205
 # Derive model tag exactly like run_yolo.py does
 MODEL_TAG=$(basename "$MODEL" .pt | tr '.-' '__')
 
 # Construct run name identically to Python script
-RUN_NAME="${YEAR}${LABEL}_${MODEL_TAG}_${SLURM_JOB_ID}"
+RUN_NAME="${YEAR}elasmobranch_${MODEL_TAG}_${JOB}"
 PROJECT_DIR="output"
 RUN_DIR="${PROJECT_DIR}/${RUN_NAME}"
-
-echo "SLURM_JOB_ID: ${SLURM_JOB_ID}"
-echo "RUN_NAME: ${RUN_NAME}"
-echo "RUN_DIR: ${RUN_DIR}"
-
-echo "=== Train start ==="
-srun python config/run_yolo.py \
-    --year ${YEAR} \
-    --model ${MODEL} \
-    --label ${LABEL} \
-    --epochs 80 \
-    --imgsz 1024 \
-    --batch 16
-
-echo "=== Train finished ==="
-
 BEST_WEIGHTS="${RUN_DIR}/weights/best.pt"
 
-if [ ! -f "${BEST_WEIGHTS}" ]; then
-    echo "ERROR: best.pt not found at ${BEST_WEIGHTS}"
-    exit 1
-fi
+echo "=== Evaluation start ==="
 
-echo "=== Eval start ==="
-srun --gres=gpu:1 nvidia-smi
 srun python config/eval_yolo_detections_hung.py \
     --year ${YEAR} \
     --model_name ${MODEL_TAG} \
@@ -66,10 +49,8 @@ srun python config/eval_yolo_detections_hung.py \
     --out_fn_csv ${RUN_DIR}/eval/fn${YEAR}_${MODEL_TAG}.csv \
     --imgsz 1024 \
     --conf 0.01 \
-    --nms_iou 0.75 \
-    --match_iou 0.01 \
+    --nms_iou 0.35 \
+    --match_iou 0.4 \
     --max_det 600 \
     --debug_n 10 \
     --device 0
-
-echo "=== Job complete ==="

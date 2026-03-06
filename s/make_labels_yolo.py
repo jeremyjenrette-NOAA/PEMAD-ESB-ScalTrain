@@ -12,7 +12,7 @@ def clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
-def bbox_to_yolo(x1, y1, x2, y2, w, h, min_wh_px=4.0):
+def bbox_to_yolo(x1, y1, x2, y2, w, h):
     # clip to image bounds
     x1 = clamp(float(x1), 0, w - 1)
     y1 = clamp(float(y1), 0, h - 1)
@@ -25,7 +25,7 @@ def bbox_to_yolo(x1, y1, x2, y2, w, h, min_wh_px=4.0):
 
     bw = x_max - x_min
     bh = y_max - y_min
-    if bw <= min_wh_px or bh <= min_wh_px:
+    if bw <= 1 or bh <= 1:
         return None
 
     xc = x_min + bw / 2.0
@@ -36,9 +36,6 @@ def bbox_to_yolo(x1, y1, x2, y2, w, h, min_wh_px=4.0):
 
 
 def stratified_split_by_object_count(counts_df, seed=7, val_frac=0.1):
-    """
-    counts_df must have columns: image, n (objects per image)
-    """
     counts = counts_df.copy()
     q = min(5, max(2, counts["n"].nunique()))
     counts["bin"] = pd.qcut(counts["n"], q=q, duplicates="drop")
@@ -88,9 +85,56 @@ def cap_negs(neg_set, pos_n, ratio, seed):
     return set(neg_list[:min(len(neg_list), cap)])
 
 
+def load_point_exclusions_from_csv(
+    ann_csv: Path,
+    scope: str,
+    scallop_class_ids: list[int],
+) -> set[str]:
+    """
+    ann_csv must contain:
+      - imagename (or Imagename)
+      - geom_type  (values like point/line/bbox...)
+    optionally:
+      - class_id (if scope == 'scallop')
+    """
+    adf = pd.read_csv(ann_csv)
+
+    # normalize column names
+    cols = {c.lower(): c for c in adf.columns}
+    if "imagename" not in cols:
+        raise ValueError(f"{ann_csv} missing 'imagename' column. Found: {list(adf.columns)}")
+    if "geom_type" not in cols:
+        raise ValueError(f"{ann_csv} missing 'geom_type' column. Found: {list(adf.columns)}")
+
+    img_col = cols["imagename"]
+    geom_col = cols["geom_type"]
+
+    adf[geom_col] = adf[geom_col].astype(str).str.strip().str.lower()
+    adf[img_col] = adf[img_col].astype(str).str.strip()
+
+    pts = adf[adf[geom_col] == "point"].copy()
+
+    if scope == "any":
+        return set(pts[img_col].dropna().unique().tolist())
+
+    if scope == "scallop":
+        # require class_id column
+        if "class_id" not in cols:
+            raise ValueError(
+                f"--point_scope scallop requires 'class_id' column in {ann_csv}. "
+                f"Found: {list(adf.columns)}"
+            )
+        cid_col = cols["class_id"]
+        pts[cid_col] = pd.to_numeric(pts[cid_col], errors="coerce")
+        pts = pts[pts[cid_col].isin(scallop_class_ids)].copy()
+        return set(pts[img_col].dropna().unique().tolist())
+
+    raise ValueError("--point_scope must be 'any' or 'scallop'")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--csv", required=True)
+    ap.add_argument("--csv", required=True, help="groundtruth CSV with bboxes")
     ap.add_argument("--img_dir", required=True)
     ap.add_argument("--out_root", required=True)
     ap.add_argument("--seed", type=int, default=7)
@@ -99,20 +143,28 @@ def main():
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--link_mode", choices=["symlink", "hardlink", "copy"], default="symlink")
 
-    # negatives control
+    # negatives
     ap.add_argument("--neg_ratio", type=float, default=2.0,
                     help="Max negatives per positive image. Use -1 to include ALL negatives.")
-    ap.add_argument("--neg_val_frac", type=float, default=None,
-                    help="Override val_frac for negatives only.")
+    ap.add_argument("--neg_val_frac", type=float, default=None)
 
-    # tiny-box filtering (for point->box artifacts)
-    ap.add_argument("--min_wh_px", type=float, default=4.0,
-                    help="Minimum bbox width/height in pixels. Increase to filter tiny point-derived boxes.")
+    # point exclusion using processed annotations CSV
+    ap.add_argument("--ann_csv", required=True, help="processed annotations CSV with imagename + geom_type")
+    ap.add_argument("--point_scope", choices=["any", "scallop"], default="any",
+                    help="Exclude images with point annotations for any class, or only scallop class_ids (requires class_id column).")
+    ap.add_argument(
+        "--scallop_class_ids",
+        default="185,515,197,207,920,213,912,916,525,919,215,915",
+        help="Comma-separated class_id values treated as scallop in the processed annotation table."
+    )
     args = ap.parse_args()
 
     csv_path = Path(args.csv)
     img_dir = Path(args.img_dir)
     out_root = Path(args.out_root)
+    ann_csv = Path(args.ann_csv)
+
+    scallop_ids = [int(x.strip()) for x in args.scallop_class_ids.split(",") if x.strip()]
 
     if out_root.exists():
         if not args.force:
@@ -127,7 +179,23 @@ def main():
     for p in [img_train, img_val, lab_train, lab_val]:
         p.mkdir(parents=True, exist_ok=True)
 
-    # ---- Load + standardize CSV ----
+    # List ALL images available in img_dir
+    all_images = sorted([p.name for p in img_dir.glob("*") if p.is_file()])
+    all_set = set(all_images)
+    if not all_images:
+        raise ValueError(f"No image files found in img_dir: {img_dir}")
+
+    # --- Load point exclusions from processed CSV ---
+    point_excluded = load_point_exclusions_from_csv(
+        ann_csv=ann_csv,
+        scope=args.point_scope,
+        scallop_class_ids=scallop_ids,
+    )
+
+    # Only exclude those that exist on disk
+    point_excluded = set([x for x in point_excluded if x in all_set])
+
+    # ---- Load bbox CSV (groundtruth) ----
     df = pd.read_csv(csv_path)
     df = df.rename(columns={"Imagename": "image", "ClassName": "label"})
 
@@ -136,7 +204,7 @@ def main():
             raise ValueError(f"CSV missing required column '{col}'. Available: {list(df.columns)}")
 
     df["label"] = df["label"].astype(str).str.strip().str.lower()
-    df["image"] = df["image"].astype(str)
+    df["image"] = df["image"].astype(str).str.strip()
 
     # Keep only target label rows
     df = df[df["label"] == args.label].copy()
@@ -150,23 +218,18 @@ def main():
     if df.empty:
         raise ValueError("All rows dropped due to missing bbox coordinates.")
 
-    # List ALL images available in img_dir
-    all_images = sorted([p.name for p in img_dir.glob("*") if p.is_file()])
-    all_set = set(all_images)
-    if not all_images:
-        raise ValueError(f"No image files found in img_dir: {img_dir}")
-
-    # Keep only bbox rows whose image exists on disk
+    # Keep only rows whose image exists AND is not point-excluded
     df = df[df["image"].isin(all_set)].copy()
+    df = df[~df["image"].isin(point_excluded)].copy()
     if df.empty:
-        raise ValueError("No remaining scallop rows after filtering to existing images.")
+        raise ValueError("No remaining scallop bbox rows after disk + point exclusion filtering.")
 
     grouped = df.groupby("image")
 
-    # ---- Precompute YOLO rows per image AFTER small-box filtering ----
+    # ---- Build YOLO rows per image (no small-box filtering) ----
     rows_by_image = {}
     valid_counts = []
-    tiny_only_images = 0
+    n_bad_img_open = 0
 
     for fname, sub in grouped:
         src_img = img_dir / fname
@@ -175,11 +238,12 @@ def main():
                 w, h = im.size
         except Exception as e:
             print(f"WARNING: could not open image {src_img}: {e}")
+            n_bad_img_open += 1
             continue
 
         rows = []
         for r in sub.itertuples(index=False):
-            y = bbox_to_yolo(r.TLx, r.TLy, r.BRx, r.BRy, w, h, min_wh_px=args.min_wh_px)
+            y = bbox_to_yolo(r.TLx, r.TLy, r.BRx, r.BRy, w, h)
             if y is None:
                 continue
             xc, yc, bw, bh = y
@@ -188,24 +252,23 @@ def main():
         if rows:
             rows_by_image[fname] = rows
             valid_counts.append((fname, len(rows)))
-        else:
-            tiny_only_images += 1  # had scallop rows, but all filtered out as tiny/invalid
 
     counts_df = pd.DataFrame(valid_counts, columns=["image", "n"])
     if counts_df.empty:
-        raise ValueError("No valid boxes remain after min_wh_px filtering. Try lowering --min_wh_px.")
+        raise ValueError("No valid boxes remain after converting bboxes to YOLO format.")
 
-    # Final positives are ONLY those with >=1 valid box
     pos_set = set(rows_by_image.keys())
 
-    # Final negatives are images on disk that are not in pos_set
-    excluded_images = set(grouped.groups.keys()) - set(rows_by_image.keys())
-    neg_images_all = sorted(list(all_set - pos_set - excluded_images))
+    # Exclude point images from *everything*
+    usable_images = all_set - point_excluded
 
-    # ---- Split positives (stratified by valid scallop count) ----
+    # Negatives are images on disk, usable, and not positives
+    neg_images_all = sorted(list(usable_images - pos_set))
+
+    # ---- Split positives ----
     train_pos, val_pos = stratified_split_by_object_count(counts_df, seed=args.seed, val_frac=args.val_frac)
 
-    # ---- Split negatives (random) then cap by ratio using FINAL pos counts ----
+    # ---- Split negatives ----
     neg_val_frac = args.val_frac if args.neg_val_frac is None else args.neg_val_frac
     train_neg_all, val_neg_all = split_list(neg_images_all, seed=args.seed, val_frac=neg_val_frac)
 
@@ -218,30 +281,30 @@ def main():
         dst_img = (img_train if split == "train" else img_val) / fname
         dst_lab = (lab_train if split == "train" else lab_val) / (Path(fname).stem + ".txt")
 
-        # labels always written (empty file = true negative)
         if rows:
             dst_lab.write_text("\n".join(rows) + "\n")
         else:
-            dst_lab.write_text("")
+            dst_lab.write_text("")  # true negative
 
         link_image(src_img, dst_img, mode=args.link_mode)
 
     n_pos_written = 0
     n_neg_written = 0
 
-    # positives
     for fname in sorted(list(train_pos | val_pos)):
         split = "train" if fname in train_pos else "val"
         write_one(split, fname, rows_by_image[fname])
         n_pos_written += 1
 
-    # negatives
     for fname in sorted(list(train_neg)):
         write_one("train", fname, [])
         n_neg_written += 1
     for fname in sorted(list(val_neg)):
         write_one("val", fname, [])
         n_neg_written += 1
+
+    # Save excluded list for auditing
+    (out_root / "excluded_point_images.txt").write_text("\n".join(sorted(point_excluded)) + "\n")
 
     # YAML
     yaml_text = f"""# scallop.yaml
@@ -254,52 +317,17 @@ names:
 """
     (out_root / "scallop.yaml").write_text(yaml_text)
 
-    # ---- Audit invariants ----
-    def stems_in_files(dirpath: Path):
-        return sorted({p.stem for p in dirpath.glob("*") if p.is_file()})
-
-    train_img_stems = stems_in_files(img_train)
-    val_img_stems   = stems_in_files(img_val)
-    train_lab_stems = sorted({p.stem for p in lab_train.glob("*.txt")})
-    val_lab_stems   = sorted({p.stem for p in lab_val.glob("*.txt")})
-
-    def diff(a, b):
-        return sorted(set(a) - set(b))
-
-    orphan_train_imgs = diff(train_img_stems, train_lab_stems)
-    orphan_val_imgs   = diff(val_img_stems, val_lab_stems)
-    orphan_train_labs = diff(train_lab_stems, train_img_stems)
-    orphan_val_labs   = diff(val_lab_stems, val_img_stems)
-
     print("\n=== YOLO dataset build summary ===")
     print("img_dir:", img_dir.resolve())
     print("all images in img_dir:", len(all_images))
-    print("positives (>=1 valid box after filter):", len(pos_set))
-    print("negatives available:", len(neg_images_all))
-    print("scallop-annotated images that became tiny-only after filter (not positives):", tiny_only_images)
+    print("point-excluded images (exist on disk):", len(point_excluded))
+    print("positives (>=1 scallop box, not point-excluded):", len(pos_set))
+    print("negatives available (usable, not positive, not point-excluded):", len(neg_images_all))
     print("neg_ratio (cap):", args.neg_ratio)
     print("val_frac:", args.val_frac, "neg_val_frac:", neg_val_frac)
-    print("min_wh_px:", args.min_wh_px)
-
-    print("\nSelected for TRAIN:")
-    print("  positives:", len(train_pos), "negatives:", len(train_neg), "total:", len(train_pos) + len(train_neg))
-    print("Selected for VAL:")
-    print("  positives:", len(val_pos), "negatives:", len(val_neg), "total:", len(val_pos) + len(val_neg))
-
-    print("\nWritten:")
-    print("  positives:", n_pos_written)
-    print("  negatives:", n_neg_written)
-
-    if orphan_train_imgs or orphan_val_imgs or orphan_train_labs or orphan_val_labs:
-        print("\nWARNING: Found mismatches (should be empty lists).")
-        print("orphan_train_imgs:", orphan_train_imgs[:10])
-        print("orphan_val_imgs:", orphan_val_imgs[:10])
-        print("orphan_train_labs:", orphan_train_labs[:10])
-        print("orphan_val_labs:", orphan_val_labs[:10])
-    else:
-        print("\nAudit OK: 1:1 image↔label mapping in train and val.")
-
-    print("\nWrote YAML:", out_root / "scallop.yaml")
+    print("bad images that failed to open:", n_bad_img_open)
+    print("Wrote excluded list:", out_root / "excluded_point_images.txt")
+    print("Wrote YAML:", out_root / "scallop.yaml")
 
 
 if __name__ == "__main__":

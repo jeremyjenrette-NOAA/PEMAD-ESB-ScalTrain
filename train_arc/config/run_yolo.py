@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--device", default="0", help="CUDA device id(s), e.g. '0' or '0,1' or 'cpu'")
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--label", default="scallop")
 
     # paths
     ap.add_argument(
@@ -36,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--yaml_name",
-        default="scallop.yaml",
+        default="label.yaml",
         help="YAML filename under the year-specific yolo folder.",
     )
     ap.add_argument(
@@ -64,7 +65,7 @@ def main() -> None:
     # derive a short model tag for filenames
     model_tag = Path(args.model).stem.replace(".", "_").replace("-", "_")
     tag = f"_{args.run_tag}" if args.run_tag else ""
-    run_name = f"{args.year}scallop_{model_tag}_{tag}_{job_id}"
+    run_name = f"{args.year}{args.label}_{model_tag}_{tag}{job_id}"
 
     print("=== Training configuration ===")
     print("data_yaml:", data_yaml)
