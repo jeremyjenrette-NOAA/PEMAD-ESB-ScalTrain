@@ -307,7 +307,7 @@ def main():
     (out_root / "excluded_point_images.txt").write_text("\n".join(sorted(point_excluded)) + "\n")
 
     # YAML
-    yaml_text = f"""# scallop.yaml
+    yaml_text = f"""# label.yaml
 path: {out_root.resolve()}
 train: images/train
 val: images/val
@@ -315,7 +315,7 @@ val: images/val
 names:
   0: {args.label}
 """
-    (out_root / "scallop.yaml").write_text(yaml_text)
+    (out_root / "label.yaml").write_text(yaml_text)
 
     print("\n=== YOLO dataset build summary ===")
     print("img_dir:", img_dir.resolve())
@@ -327,7 +327,7 @@ names:
     print("val_frac:", args.val_frac, "neg_val_frac:", neg_val_frac)
     print("bad images that failed to open:", n_bad_img_open)
     print("Wrote excluded list:", out_root / "excluded_point_images.txt")
-    print("Wrote YAML:", out_root / "scallop.yaml")
+    print("Wrote YAML:", out_root / "label.yaml")
 
 
 if __name__ == "__main__":
