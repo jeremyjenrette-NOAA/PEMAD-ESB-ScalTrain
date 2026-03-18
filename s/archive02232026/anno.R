@@ -11,14 +11,16 @@ suppressPackageStartupMessages({
 # ============================================================
 # Settings
 # ============================================================
-IMG_DIR_FULL   <- "../data/images/2022tr"          # full stereo images (flat)
-IMG_DIR_LEFT   <- "../data/images/2022tr_split"     # output left-only images
+# IMG_DIR_FULL   <- "../data/images/2022tr"          # full stereo images (flat)
+# IMG_DIR_FULL   <- "/mnt/s/saltnoaa/images/2022tr"          
+IMG_DIR_FULL <- "/Volumes/PortableSSD/saltnoaa/images/2022/"
+IMG_DIR_LEFT   <- "../data/images/2022"     # output left-only images
 OUT_DIR        <- "../data/audit_2022tr"           # audit outputs
 N_MONTAGE      <- 6
-SET_SEED       <- 7
+# SET_SEED       <- 7
 OVERWRITE_LEFT <- FALSE
 YEAR = 2022
-SCALLOP_CLASS = 185
+SCALLOP_CLASS = c(185, 515, 197, 207, 920, 213, 912, 916, 525, 919, 215, 915)
 
 dir.create(OUT_DIR, showWarnings = FALSE, recursive = TRUE)
 dir.create(IMG_DIR_LEFT, showWarnings = FALSE, recursive = TRUE)
@@ -103,37 +105,60 @@ remap_bbox_to_left_half <- function(tlx, tly, brx, bry, full_w, full_h) {
 # ============================================================
 # Split image (stereo) -> left half and save
 # ============================================================
-split_and_save_left <- function(src_path, dest_path, overwrite = FALSE) {
-  if (!file.exists(src_path)) return(FALSE)
-  if (file.exists(dest_path) && !overwrite) return(TRUE)
+split_and_save_left_safe <- function(src_path, dest_path, overwrite = FALSE, retry = 1) {
+  if (!file.exists(src_path)) {
+    return(list(ok = FALSE, status = "missing_src", msg = "source file not found"))
+  }
+  if (file.exists(dest_path) && !overwrite) {
+    return(list(ok = TRUE, status = "already_exists", msg = NA_character_))
+  }
   
-  im <- image_read(src_path)
-  info <- image_info(im)
+  attempt <- 0
+  last_err <- NA_character_
   
-  full_w <- info$width[1]
-  full_h <- info$height[1]
-  half_w <- floor(full_w / 2)
+  while (attempt <= retry) {
+    attempt <- attempt + 1
+    res <- tryCatch({
+      im <- image_read(src_path)
+      info <- image_info(im)
+      full_w <- info$width[1]
+      full_h <- info$height[1]
+      half_w <- floor(full_w / 2)
+      
+      left <- image_crop(im, geometry = paste0(half_w, "x", full_h, "+0+0"))
+      image_write(left, path = dest_path, format = "png")
+      
+      list(ok = TRUE, status = "saved", msg = NA_character_)
+    }, error = function(e) {
+      last_err <<- conditionMessage(e)
+      NULL
+    })
+    
+    if (!is.null(res)) return(res)
+    
+    # brief pause can help with flaky /mnt/* reads
+    Sys.sleep(0.05)
+  }
   
-  # crop left half: geometry = "<w>x<h>+x+y"
-  left <- image_crop(im, geometry = paste0(half_w, "x", full_h, "+0+0"))
-  image_write(left, path = dest_path, format = "png")
-  TRUE
+  list(ok = FALSE, status = "read_error", msg = last_err)
 }
+
 
 # ============================================================
 # 0) Preconditions: expect dat_scallop exists
 # ============================================================
 # stopifnot(exists("dat_scallop"))
+SCALLOP_CLASS = c(185, 515, 197, 207, 920, 213, 912, 916, 525, 919, 215, 915)
 AnnHeader=c("annotation_id","image_id","scope_id","category_id","geometry_text","thegeom","annotator_id","assignment_id","timestamp","class_id","deprecated","geometry_id","imagename","assignment_num","percent_cover","comment","source","data_identifier")
 Ann=read.table(file=paste0("../data/raw/annotations_",YEAR,".txt"), fill=TRUE,sep="\t",na.strings=c("\\N", NA),col.names=AnnHeader,stringsAsFactors =FALSE)
-dat_scallop = subset(Ann, class_id == SCALLOP_CLASS)
+dat_scallop = subset(Ann, class_id %in% SCALLOP_CLASS)
 # Ensure imagename + paths
 dat_scallop2 <- dat_scallop %>%
   mutate(
     imagename  = str_trim(imagename),
-    img_full   = file.path(IMG_DIR_FULL, imagename),
-    img_left   = file.path(IMG_DIR_LEFT, imagename),
-    img_exists = file.exists(img_full),
+    # img_full   = file.path(IMG_DIR_FULL, imagename),
+    # img_left   = file.path(IMG_DIR_LEFT, imagename),
+    # img_exists = file.exists(img_full),
     geom_type  = vapply(geometry_text, geom_type_from_text, character(1))
   )
 
@@ -228,114 +253,108 @@ unique_imgs <- ann %>%
   distinct(imagename, img_full, img_left, img_exists) %>%
   filter(img_exists)
 
-# If you have tons, this still stays light because it processes one at a time.
-split_ok <- map_lgl(seq_len(nrow(unique_imgs)), function(i) {
-  split_and_save_left(unique_imgs$img_full[i], unique_imgs$img_left[i], overwrite = OVERWRITE_LEFT)
+# ---- run it on your unique_imgs (one at a time; does not crash) ----
+split_log_file <- file.path(OUT_DIR, "split_left_failures.csv")
+
+split_results <- map(seq_len(nrow(unique_imgs)), function(i) {
+  r <- split_and_save_left_safe(
+    src_path  = unique_imgs$img_full[i],
+    dest_path = unique_imgs$img_left[i],
+    overwrite = OVERWRITE_LEFT,
+    retry = 1
+  )
+  
+  tibble(
+    imagename = unique_imgs$imagename[i],
+    img_full  = unique_imgs$img_full[i],
+    img_left  = unique_imgs$img_left[i],
+    ok        = r$ok,
+    status    = r$status,
+    msg       = r$msg
+  )
 })
 
-split_audit <- unique_imgs %>%
-  mutate(left_saved = split_ok,
-         left_exists = file.exists(img_left))
+split_audit <- bind_rows(split_results) %>%
+  mutate(left_exists = file.exists(img_left))
 
+# save full audit
 write_csv(split_audit, file.path(OUT_DIR, "split_left_audit_2022tr.csv"))
 
-# ============================================================
-# 4) Remap LINE bboxes to LEFT image coordinates + clip
-# ============================================================
-# We need image widths/heights to remap properly. We'll read info per image once.
-img_dims <- split_audit %>%
-  filter(left_exists) %>%
-  select(imagename, img_full, img_left) %>%
-  mutate(
-    # read info from FULL image (since original coords are in full stereo space)
-    info = map(img_full, ~ image_info(image_read(.x))),
-    full_w = map_dbl(info, ~ .x$width[1]),
-    full_h = map_dbl(info, ~ .x$height[1])
-  ) %>%
-  select(-info)
+# save failures only (easier to inspect)
+failures <- split_audit %>% filter(!ok)
+write_csv(failures, split_log_file)
 
-# Join dims onto annotations
-ann2 <- ann %>%
-  left_join(img_dims, by = "imagename")
+split_audit %>%
+  count(status, sort = TRUE) %>%
+  print(n = Inf)
 
-# Remap only line bboxes
-remapped <- ann2 %>%
-  mutate(
-    remap = pmap(
-      list(tlx, tly, brx, bry, full_w, full_h, geom_type),
-      function(tlx, tly, brx, bry, full_w, full_h, geom_type) {
-        if (geom_type != "line" || any(is.na(c(tlx, tly, brx, bry, full_w, full_h)))) {
-          return(c(NA_real_, NA_real_, NA_real_, NA_real_, NA_real_, NA_real_, "not_line_or_missing_dims"))
-        }
-        remap_bbox_to_left_half(tlx, tly, brx, bry, full_w, full_h)
-      }
-    ),
-    tlx_left = map_dbl(remap, 1),
-    tly_left = map_dbl(remap, 2),
-    brx_left = map_dbl(remap, 3),
-    bry_left = map_dbl(remap, 4),
-    left_w   = map_dbl(remap, 5),
-    left_h   = map_dbl(remap, 6),
-    split_status = map_chr(remap, 7),
-    
-    # recompute box metrics in left coords
-    box_w_left = brx_left - tlx_left,
-    box_h_left = bry_left - tly_left,
-    box_area_left = box_w_left * box_h_left,
-    
-    dropped_in_left = split_status == "dropped_right" | is.na(tlx_left) | is.na(brx_left)
-  ) %>%
-  select(-remap)
-
-# Save “left-ready” annotations
-ann_left_file <- file.path(OUT_DIR, "annotations_2022tr_left_bboxes.csv")
-write_csv(remapped, ann_left_file)
-cat("Wrote left-remapped annotations to:\n", ann_left_file, "\n")
-
-# Quick summary of split effects
-split_effects <- remapped %>%
-  filter(geom_type == "line") %>%
-  count(split_status, sort = TRUE)
-
-write_csv(split_effects, file.path(OUT_DIR, "split_effects_summary.csv"))
-print(split_effects)
+cat("\nFailures written to:\n", split_log_file, "\n")
 
 # ============================================================
-# 5) Montage: 6 random LEFT images with LEFT bboxes
+# 4) OMITTED: remap LINE bboxes to LEFT coords + clip
+#    (We will instead clip bboxes on-the-fly for montage only.)
 # ============================================================
-set.seed(SET_SEED)
 
-valid_imgs <- remapped %>%
+# ============================================================
+# 5) Montage: 6 random LEFT images with bboxes clipped to left-half
+# ============================================================
+# ---- precompute once (outside loop) ----
+valid_imgs <- ann %>%
   filter(
     geom_type == "line",
-    !dropped_in_left,
-    !is.na(tlx_left), !is.na(tly_left), !is.na(brx_left), !is.na(bry_left),
+    !is.na(tlx), !is.na(tly), !is.na(brx), !is.na(bry),
     file.exists(file.path(IMG_DIR_LEFT, imagename))
   ) %>%
-  group_by(imagename) %>%
-  summarise(n_ann = n(), .groups = "drop") %>%
-  filter(n_ann > 0) %>%
-  pull(imagename) %>%
-  unique()
+  distinct(imagename) %>%
+  pull(imagename)
 
-if (length(valid_imgs) == 0) stop("No valid images found for montage after remap.")
+if (length(valid_imgs) == 0) stop("No valid images found for montage (line bboxes + left image exists).")
 
-pick_imgs <- sample(valid_imgs, size = min(N_MONTAGE, length(valid_imgs)), replace = FALSE)
+clip_bbox_to_left_image <- function(tlx, tly, brx, bry, left_w, left_h) {
+  if (is.na(tlx) || is.na(brx) || tlx >= left_w) return(NULL)
+  
+  tlx2 <- max(0, min(tlx, left_w - 1))
+  brx2 <- max(0, min(brx, left_w - 1))
+  tly2 <- max(0, min(tly, left_h - 1))
+  bry2 <- max(0, min(bry, left_h - 1))
+  
+  if (brx2 <= tlx2 || bry2 <= tly2) return(NULL)
+  
+  tibble(
+    tlx = tlx2, tly = tly2, brx = brx2, bry = bry2,
+    clipped = (brx > (left_w - 1))
+  )
+}
 
-draw_boxes_one_left <- function(imagename, ann_df, img_dir) {
+draw_boxes_one_left_clipped <- function(imagename, ann_df, img_dir_left) {
+  left_path <- file.path(img_dir_left, imagename)
+  
+  im_left <- image_read(left_path)
+  info <- image_info(im_left)
+  left_w <- info$width[1]
+  left_h <- info$height[1]
+  
   this <- ann_df %>%
-    filter(imagename == .env$imagename, geom_type == "line", !dropped_in_left)
+    filter(imagename == .env$imagename, geom_type == "line") %>%
+    select(tlx, tly, brx, bry)
   
-  path <- file.path(img_dir, imagename)
-  im <- image_read(path)
+  clipped_df <- pmap_dfr(
+    list(this$tlx, this$tly, this$brx, this$bry),
+    ~ clip_bbox_to_left_image(..1, ..2, ..3, ..4, left_w = left_w, left_h = left_h)
+  )
   
-  for (i in seq_len(nrow(this))) {
-    im <- image_draw(im)
+  n_total <- nrow(this)
+  n_kept  <- nrow(clipped_df)
+  n_clip  <- ifelse(n_kept > 0, sum(clipped_df$clipped), 0)
+  
+  # ---- KEY CHANGE: draw ONCE per image (not once per box) ----
+  if (n_kept > 0) {
+    im_left <- image_draw(im_left)
     rect(
-      xleft   = this$tlx_left[i],
-      ytop    = this$tly_left[i],
-      xright  = this$brx_left[i],
-      ybottom = this$bry_left[i],
+      xleft   = clipped_df$tlx,
+      ytop    = clipped_df$tly,
+      xright  = clipped_df$brx,
+      ybottom = clipped_df$bry,
       border  = "red",
       lwd     = 3
     )
@@ -343,8 +362,8 @@ draw_boxes_one_left <- function(imagename, ann_df, img_dir) {
   }
   
   image_annotate(
-    im,
-    text = paste0(imagename, " (n=", nrow(this), ", ", paste0(unique(this$split_status), collapse = ","), ")"),
+    im_left,
+    text = paste0(imagename, " | line=", n_total, " kept=", n_kept, " clipped=", n_clip),
     gravity = "northwest",
     size = 28,
     color = "white",
@@ -352,21 +371,52 @@ draw_boxes_one_left <- function(imagename, ann_df, img_dir) {
   )
 }
 
-annotated_imgs <- map(pick_imgs, draw_boxes_one_left, ann_df = remapped, img_dir = IMG_DIR_LEFT)
+# --------------------------
+# loop montages with different seeds
+# --------------------------
+make_montage_for_seed <- function(seed, n_montage = 6) {
+  set.seed(seed)
+  
+  pick_imgs <- sample(valid_imgs, size = min(n_montage, length(valid_imgs)), replace = FALSE)
+  
+  annotated_imgs <- map(
+    pick_imgs,
+    ~ tryCatch(
+      draw_boxes_one_left_clipped(.x, ann_df = ann, img_dir_left = IMG_DIR_LEFT),
+      error = function(e) { message("FAIL ", .x, " (seed=", seed, "): ", conditionMessage(e)); NULL }
+    )
+  ) %>% compact()
+  
+  if (length(annotated_imgs) == 0) {
+    message("Seed ", seed, ": no annotated images produced.")
+    return(invisible(NULL))
+  }
+  
+  n <- length(annotated_imgs)
+  tile_x <- ceiling(sqrt(n))
+  tile_y <- ceiling(n / tile_x)
+  
+  montage <- image_montage(
+    do.call(c, annotated_imgs),
+    tile = paste0(tile_x, "x", tile_y),
+    geometry = "+2+2"
+  )
+  
+  montage_file <- file.path(OUT_DIR, paste0("montage_2022tr_left_seed", seed, ".png"))
+  image_write(montage, path = montage_file, format = "png")
+  
+  # append log
+  log_file <- file.path(OUT_DIR, "montage_images_used.txt")
+  write_lines(c(paste0("seed=", seed), pick_imgs, ""), log_file, append = TRUE)
+  
+  rm(annotated_imgs, montage)
+  gc()
+  
+  cat("Saved montage:", montage_file, "\n")
+  invisible(montage_file)
+}
 
-# montage layout: 2x3 for 6, otherwise roughly square
-n <- length(annotated_imgs)
-tile_x <- ceiling(sqrt(n))
-tile_y <- ceiling(n / tile_x)
-
-montage <- image_montage(
-  do.call(c, annotated_imgs),
-  tile = paste0(tile_x, "x", tile_y),
-  geometry = "+2+2"
-)
-
-montage_file <- file.path(OUT_DIR, "montage_2022tr_left_random.png")
-image_write(montage, path = montage_file, format = "png")
-write_lines(pick_imgs, file.path(OUT_DIR, "montage_images_used.txt"))
-
-cat("\nSaved montage:\n", montage_file, "\n")
+# Example: seeds 1–20
+for (seed in 1:20) {
+  make_montage_for_seed(seed, n_montage = N_MONTAGE)
+}

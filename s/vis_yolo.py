@@ -134,7 +134,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--labels_dir", required=True, help="Directory of YOLO .txt label files (e.g., data/labels/train)")
     ap.add_argument("--imgdir", required=True, help="Directory where images live (e.g., /Volumes/PortableSSD/saltnoaa/images/2022)")
-    ap.add_argument("--outdir", default="data/processed/yolo_viz", help="Where to save overlays")
+    ap.add_argument("--outdir", default="data/processed/", help="Where to save overlays")
     ap.add_argument("--n", type=int, default=12, help="Number of random label files to visualize")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--max_boxes", type=int, default=None, help="Optional cap boxes drawn per image")
