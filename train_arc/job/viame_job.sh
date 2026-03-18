@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=10:00:00
+#SBATCH --time=60:00:00
 #SBATCH --output=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/viame_yolo_scal_%j.out
 #SBATCH --error=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/viame_yolo_scal_%j.err
 
@@ -21,7 +21,7 @@ export VIAME_INSTALL="/projects/sharkpulse/archived/viame"
 source ${VIAME_INSTALL}/setup_viame.sh
 
 BASE_DIR="/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc"
-TRAIN_DIR="data2022/viame"
+TRAIN_DIR="data2022/viame_test"
 
 # Output directory for this job
 JOB_OUT_DIR="${BASE_DIR}/output/viame_${SLURM_JOB_ID}"

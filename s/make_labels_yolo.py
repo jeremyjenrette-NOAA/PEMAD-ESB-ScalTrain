@@ -205,12 +205,14 @@ def main():
 
     df["label"] = df["label"].astype(str).str.strip().str.lower()
     df["image"] = df["image"].astype(str).str.strip()
+    print("Unique scallop images BEFORE ANY filtering:", df["image"].nunique())
 
     # Keep only target label rows
     df = df[df["label"] == args.label].copy()
     if df.empty:
         raise ValueError(f"No rows with label == {args.label}")
 
+    print("Unique scallop images AFTER label filtering:", df["image"].nunique())
     # Parse bbox numeric + drop missing
     for c in ["TLx", "TLy", "BRx", "BRy"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -218,12 +220,14 @@ def main():
     if df.empty:
         raise ValueError("All rows dropped due to missing bbox coordinates.")
 
+    print("Unique scallop images AFTER bbox filtering:", df["image"].nunique())
     # Keep only rows whose image exists AND is not point-excluded
     df = df[df["image"].isin(all_set)].copy()
     df = df[~df["image"].isin(point_excluded)].copy()
     if df.empty:
         raise ValueError("No remaining scallop bbox rows after disk + point exclusion filtering.")
 
+    print("Unique scallop images AFTER exist and point-excl filtering:", df["image"].nunique())
     grouped = df.groupby("image")
 
     # ---- Build YOLO rows per image (no small-box filtering) ----
@@ -252,6 +256,20 @@ def main():
         if rows:
             rows_by_image[fname] = rows
             valid_counts.append((fname, len(rows)))
+            
+        if not rows:
+            print(f"\nDROPPED IMAGE: {fname}")
+            print(sub[["TLx", "TLy", "BRx", "BRy"]].head())
+            print("Image size:", w, h)
+            break
+
+    total_images = len(grouped)
+    kept_images = len(rows_by_image)
+    dropped_images = total_images - kept_images
+
+    print("Images entering bbox conversion:", total_images)
+    print("Images with ≥1 valid box:", kept_images)
+    print("Images dropped (no valid boxes):", dropped_images)
 
     counts_df = pd.DataFrame(valid_counts, columns=["image", "n"])
     if counts_df.empty:

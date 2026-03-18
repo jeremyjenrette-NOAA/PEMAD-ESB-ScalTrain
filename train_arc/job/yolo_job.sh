@@ -54,7 +54,7 @@ if [ ! -f "${BEST_WEIGHTS}" ]; then
 fi
 
 echo "=== Eval start ==="
-srun --gres=gpu:1 nvidia-smi
+
 srun python config/eval_yolo_detections_hung.py \
     --year ${YEAR} \
     --model_name ${MODEL_TAG} \
@@ -66,8 +66,8 @@ srun python config/eval_yolo_detections_hung.py \
     --out_fn_csv ${RUN_DIR}/eval/fn${YEAR}_${MODEL_TAG}.csv \
     --imgsz 1024 \
     --conf 0.01 \
-    --nms_iou 0.75 \
-    --match_iou 0.01 \
+    --nms_iou 0.65 \
+    --match_iou 0.1 \
     --max_det 600 \
     --debug_n 10 \
     --device 0
