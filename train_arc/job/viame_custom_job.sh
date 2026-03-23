@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=69:00:00
+#SBATCH --time=85:00:00
 #SBATCH --output=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/viame_custom_%j.out
 #SBATCH --error=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/viame_custom_%j.err
 
@@ -21,7 +21,7 @@ source ${VIAME_INSTALL}/setup_viame.sh
 export KWIVER_DEFAULT_LOG_LEVEL=info
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 
-YEAR=2023
+YEAR=2224
 
 BASE_DIR="/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc"
 JOB_OUT_DIR="${BASE_DIR}/output/${YEAR}scallop_viame_${SLURM_JOB_ID}"

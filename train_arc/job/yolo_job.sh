@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=05:00:00
+#SBATCH --time=10:00:00
 #SBATCH --output=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/yolo_scal_%j.out
 #SBATCH --error=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/yolo_scal_%j.err
 
@@ -19,8 +19,8 @@ cd /projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/
 conda activate scallopdet
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 ############################################################
-YEAR=2023
-MODEL=check/yolo11n.pt
+YEAR=2224
+MODEL=check/yolo12n.pt
 LABEL=scallop
 ############################################################
 # Derive model tag exactly like run_yolo.py does
@@ -40,7 +40,7 @@ srun python config/run_yolo.py \
     --year ${YEAR} \
     --model ${MODEL} \
     --label ${LABEL} \
-    --epochs 80 \
+    --epochs 100 \
     --imgsz 1024 \
     --batch 16
 
@@ -64,12 +64,13 @@ srun python config/eval_yolo_detections_hung.py \
     --out_csv ${RUN_DIR}/eval/autotest${YEAR}_${MODEL_TAG}.csv \
     --gt_out_csv ${RUN_DIR}/eval/mantest${YEAR}_${MODEL_TAG}.csv \
     --out_fn_csv ${RUN_DIR}/eval/fn${YEAR}_${MODEL_TAG}.csv \
-    --imgsz 1024 \
+    --imgsz 768 \
     --conf 0.01 \
     --nms_iou 0.65 \
     --match_iou 0.1 \
-    --max_det 600 \
+    --max_det 150 \
     --debug_n 10 \
-    --device 0
+    --device 0 \
+    --batch 1
 
 echo "=== Job complete ==="

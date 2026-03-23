@@ -257,11 +257,11 @@ def main():
             rows_by_image[fname] = rows
             valid_counts.append((fname, len(rows)))
             
-        if not rows:
-            print(f"\nDROPPED IMAGE: {fname}")
-            print(sub[["TLx", "TLy", "BRx", "BRy"]].head())
-            print("Image size:", w, h)
-            break
+        # if not rows:
+        #     print(f"\nDROPPED IMAGE: {fname}")
+        #     print(sub[["TLx", "TLy", "BRx", "BRy"]].head())
+        #     print("Image size:", w, h)
+        #     break
 
     total_images = len(grouped)
     kept_images = len(rows_by_image)

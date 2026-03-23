@@ -230,7 +230,7 @@ def main():
         device=args.device,
         stream=True,
         verbose=False,
-        batch=1,
+        batch=args.batch,
         half=True
     )
 
