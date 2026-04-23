@@ -7,21 +7,24 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=10:00:00
-#SBATCH --output=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/yolo_scal_%j.out
-#SBATCH --error=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/yolo_scal_%j.err
+#SBATCH --time=15:00:00
+#SBATCH --output=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/yolo_%j.out
+#SBATCH --error=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/yolo_%j.err
 
 module reset
 module load Miniconda3/24.7.1-0
 
 source ~/.bashrc
 cd /projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/
-conda activate scallopdet
+# conda activate scallopdet
+conda activate yolov13
+module load CUDA/12.8.0
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 ############################################################
 YEAR=2224
-MODEL=check/yolo12n.pt
+MODEL=check/yolov13n.pt
 LABEL=scallop
+DATA_ROOT=data
 ############################################################
 # Derive model tag exactly like run_yolo.py does
 MODEL_TAG=$(basename "$MODEL" .pt | tr '.-' '__')
@@ -38,9 +41,10 @@ echo "RUN_DIR: ${RUN_DIR}"
 echo "=== Train start ==="
 srun python config/run_yolo.py \
     --year ${YEAR} \
+    --data_root ${DATA_ROOT}${YEAR}/yolo \
     --model ${MODEL} \
     --label ${LABEL} \
-    --epochs 100 \
+    --epochs 120 \
     --imgsz 1024 \
     --batch 16
 
@@ -60,7 +64,7 @@ srun python config/eval_yolo_detections_hung.py \
     --model_name ${MODEL_TAG} \
     --run_dir ${RUN_DIR} \
     --weights ${BEST_WEIGHTS} \
-    --data_root data${YEAR}/yolo \
+    --data_root ${DATA_ROOT}${YEAR}/yolo \
     --out_csv ${RUN_DIR}/eval/autotest${YEAR}_${MODEL_TAG}.csv \
     --gt_out_csv ${RUN_DIR}/eval/mantest${YEAR}_${MODEL_TAG}.csv \
     --out_fn_csv ${RUN_DIR}/eval/fn${YEAR}_${MODEL_TAG}.csv \
@@ -68,7 +72,7 @@ srun python config/eval_yolo_detections_hung.py \
     --conf 0.01 \
     --nms_iou 0.65 \
     --match_iou 0.1 \
-    --max_det 150 \
+    --max_det 300 \
     --debug_n 10 \
     --device 0 \
     --batch 1

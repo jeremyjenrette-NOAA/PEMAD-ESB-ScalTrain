@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J viame_custom
+#SBATCH -J viame_scal
 #SBATCH --account=sharkpulse
 #SBATCH --partition=a30_normal_q
 #SBATCH --nodes=1
@@ -7,9 +7,9 @@
 #SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=85:00:00
-#SBATCH --output=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/viame_custom_%j.out
-#SBATCH --error=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/viame_custom_%j.err
+#SBATCH --time=90:00:00
+#SBATCH --output=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/viame_%j.out
+#SBATCH --error=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/viame_%j.err
 
 module reset
 source ~/.bashrc
@@ -22,10 +22,11 @@ export KWIVER_DEFAULT_LOG_LEVEL=info
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 
 YEAR=2224
+DATA_ROOT=data
 
 BASE_DIR="/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc"
-JOB_OUT_DIR="${BASE_DIR}/output/${YEAR}scallop_viame_${SLURM_JOB_ID}"
-TRUTH_DIR="${BASE_DIR}/data${YEAR}/viame_truth"
+JOB_OUT_DIR="${BASE_DIR}/output/${YEAR}star_viame_${SLURM_JOB_ID}"
+TRUTH_DIR="${BASE_DIR}/${DATA_ROOT}${YEAR}/viame_truth"
 
 TRAIN_JSON="${TRUTH_DIR}/training_truth.json"
 VAL_JSON="${TRUTH_DIR}/validation_truth.json"
@@ -100,7 +101,7 @@ srun python ${BASE_DIR}/config/eval_viame_detections_hung.py \
   --conf 0.01 \
   --nms_iou 0.65 \
   --match_iou 0.1 \
-  --max_det 600 \
+  --max_det 300 \
   --debug_n 10
 
 echo "=== Cleaning output ==="

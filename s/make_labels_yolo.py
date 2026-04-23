@@ -34,6 +34,72 @@ def bbox_to_yolo(x1, y1, x2, y2, w, h):
     # normalize to [0,1]
     return (xc / w, yc / h, bw / w, bh / h)
 
+def parse_bool_series(x: pd.Series) -> pd.Series:
+    """
+    Robust boolean parser for values like:
+    True, False, true, false, 1, 0, yes, no
+    """
+    if pd.api.types.is_bool_dtype(x):
+        return x.fillna(False)
+
+    return (
+        x.astype(str)
+         .str.strip()
+         .str.lower()
+         .map({
+             "true": True,
+             "false": False,
+             "1": True,
+             "0": False,
+             "yes": True,
+             "no": False,
+             "y": True,
+             "n": False
+         })
+         .fillna(False)
+    )
+
+
+def load_split_manifest(split_csv: Path, train_col: str, test_col: str) -> pd.DataFrame:
+    sdf = pd.read_csv(split_csv)
+
+    cols_lower = {c.lower(): c for c in sdf.columns}
+    if "imagename" not in cols_lower:
+        raise ValueError(
+            f"{split_csv} missing 'imagename' column. Found: {list(sdf.columns)}"
+        )
+
+    img_col = cols_lower["imagename"]
+
+    if train_col not in sdf.columns:
+        raise ValueError(
+            f"{split_csv} missing train column '{train_col}'. Found: {list(sdf.columns)}"
+        )
+    if test_col not in sdf.columns:
+        raise ValueError(
+            f"{split_csv} missing test column '{test_col}'. Found: {list(sdf.columns)}"
+        )
+
+    sdf = sdf[[img_col, train_col, test_col]].copy()
+    sdf = sdf.rename(columns={img_col: "image"})
+    sdf["image"] = sdf["image"].astype(str).str.strip()
+    sdf[train_col] = parse_bool_series(sdf[train_col])
+    sdf[test_col] = parse_bool_series(sdf[test_col])
+
+    # keep only rows assigned to one of the two YOLO groups
+    sdf = sdf[(sdf[train_col]) | (sdf[test_col])].copy()
+
+    # sanity check: image cannot be both train and test
+    bad = sdf[sdf[train_col] & sdf[test_col]]
+    if not bad.empty:
+        raise ValueError(
+            f"{split_csv} contains {len(bad)} images marked TRUE for both "
+            f"'{train_col}' and '{test_col}'."
+        )
+
+    sdf = sdf.drop_duplicates(subset=["image"])
+
+    return sdf
 
 def stratified_split_by_object_count(counts_df, seed=7, val_frac=0.1):
     counts = counts_df.copy()
@@ -134,7 +200,7 @@ def load_point_exclusions_from_csv(
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--csv", required=True, help="groundtruth CSV with bboxes")
+    ap.add_argument("--csv", help="groundtruth CSV with bboxes")
     ap.add_argument("--img_dir", required=True)
     ap.add_argument("--out_root", required=True)
     ap.add_argument("--seed", type=int, default=7)
@@ -143,13 +209,22 @@ def main():
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--link_mode", choices=["symlink", "hardlink", "copy"], default="symlink")
 
+    ap.add_argument("--use_split_file", action="store_true",
+                    help="If set, use an external CSV manifest to define train/test assignment.")
+    ap.add_argument("--split_file_path", default=None,
+                    help="Path to dataset split CSV containing imagename + boolean split columns.")
+    ap.add_argument("--train_col", default="is_train",
+                    help="Column in split CSV indicating YOLO training images.")
+    ap.add_argument("--test_col", default="is_test",
+                    help="Column in split CSV indicating YOLO test/validation images.")
+
     # negatives
     ap.add_argument("--neg_ratio", type=float, default=2.0,
                     help="Max negatives per positive image. Use -1 to include ALL negatives.")
     ap.add_argument("--neg_val_frac", type=float, default=None)
 
     # point exclusion using processed annotations CSV
-    ap.add_argument("--ann_csv", required=True, help="processed annotations CSV with imagename + geom_type")
+    ap.add_argument("--ann_csv", help="processed annotations CSV with imagename + geom_type")
     ap.add_argument("--point_scope", choices=["any", "scallop"], default="any",
                     help="Exclude images with point annotations for any class, or only scallop class_ids (requires class_id column).")
     ap.add_argument(
@@ -158,6 +233,9 @@ def main():
         help="Comma-separated class_id values treated as scallop in the processed annotation table."
     )
     args = ap.parse_args()
+
+    if args.use_split_file:
+        print("Note: --val_frac is ignored because split assignment comes from split_file_path")
 
     csv_path = Path(args.csv)
     img_dir = Path(args.img_dir)
@@ -282,16 +360,92 @@ def main():
 
     # Negatives are images on disk, usable, and not positives
     neg_images_all = sorted(list(usable_images - pos_set))
-
-    # ---- Split positives ----
-    train_pos, val_pos = stratified_split_by_object_count(counts_df, seed=args.seed, val_frac=args.val_frac)
-
-    # ---- Split negatives ----
     neg_val_frac = args.val_frac if args.neg_val_frac is None else args.neg_val_frac
-    train_neg_all, val_neg_all = split_list(neg_images_all, seed=args.seed, val_frac=neg_val_frac)
+    # ---- Split assignment ----
+    if args.use_split_file:
+        if args.split_file_path is None:
+            raise ValueError("--use_split_file requires --split_file_path")
 
-    train_neg = cap_negs(train_neg_all, pos_n=len(train_pos), ratio=args.neg_ratio, seed=args.seed + 1337)
-    val_neg   = cap_negs(val_neg_all,   pos_n=len(val_pos),   ratio=args.neg_ratio, seed=args.seed + 7331)
+        split_csv = Path(args.split_file_path)
+        split_df = load_split_manifest(
+            split_csv=split_csv,
+            train_col=args.train_col,
+            test_col=args.test_col,
+        )
+
+        split_map = split_df.set_index("image")
+
+        manifest_images = set(split_df["image"])
+        manifest_images = manifest_images & usable_images
+
+        train_manifest = set(
+            split_df.loc[split_df[args.train_col], "image"].tolist()
+        ) & usable_images
+
+        val_manifest = set(
+            split_df.loc[split_df[args.test_col], "image"].tolist()
+        ) & usable_images
+
+        # positives obey manifest directly
+        train_pos = pos_set & train_manifest
+        val_pos = pos_set & val_manifest
+
+        # negatives also obey manifest directly
+        train_neg_all = set(neg_images_all) & train_manifest
+        val_neg_all = set(neg_images_all) & val_manifest
+
+        train_neg = cap_negs(
+            train_neg_all,
+            pos_n=len(train_pos),
+            ratio=args.neg_ratio,
+            seed=args.seed + 1337
+        )
+        val_neg = cap_negs(
+            val_neg_all,
+            pos_n=len(val_pos),
+            ratio=args.neg_ratio,
+            seed=args.seed + 7331
+        )
+
+        print("\n=== Using external split manifest ===")
+        print("split file:", split_csv.resolve())
+        print("manifest images on disk and usable:", len(manifest_images))
+        print("train manifest images:", len(train_manifest))
+        print("val/test manifest images:", len(val_manifest))
+
+        missing_from_manifest = sorted(list(usable_images - manifest_images))
+        (out_root / "images_not_in_split_manifest.txt").write_text(
+            "\n".join(missing_from_manifest) + ("\n" if missing_from_manifest else "")
+        )
+
+    else:
+        # ---- Original internal splitting behavior ----
+        train_pos, val_pos = stratified_split_by_object_count(
+            counts_df, seed=args.seed, val_frac=args.val_frac
+        )
+
+        train_neg_all, val_neg_all = split_list(
+            neg_images_all, seed=args.seed, val_frac=neg_val_frac
+        )
+
+        train_neg = cap_negs(
+            train_neg_all, pos_n=len(train_pos), ratio=args.neg_ratio, seed=args.seed + 1337
+        )
+        val_neg = cap_negs(
+            val_neg_all, pos_n=len(val_pos), ratio=args.neg_ratio, seed=args.seed + 7331
+        )
+
+    overlap = (train_pos | train_neg) & (val_pos | val_neg)
+    if overlap:
+        raise ValueError(f"Found {len(overlap)} images assigned to both train and val")
+
+    print("\n=== Final split counts ===")
+    print("train_pos:", len(train_pos))
+    print("val_pos:", len(val_pos))
+    print("train_neg:", len(train_neg))
+    print("val_neg:", len(val_neg))
+    print("train total:", len(train_pos) + len(train_neg))
+    print("val total:", len(val_pos) + len(val_neg))
 
     # ---- Writers ----
     def write_one(split, fname, rows):

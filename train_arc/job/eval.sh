@@ -21,8 +21,8 @@ conda activate scallopdet
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 # ─── Run training ───────────────────────────────────────
 YEAR=2224
-MODEL=check/yolo11n.pt
-JOB=260064
+MODEL=check/yolo12n.pt
+JOB=370283
 LABEL=scallop
 # ────────────────────────────────────────────────────────
 # Derive model tag exactly like run_yolo.py does
@@ -49,7 +49,7 @@ srun python config/eval_yolo_detections_hung.py \
     --conf 0.01 \
     --nms_iou 0.65 \
     --match_iou 0.1 \
-    --max_det 150 \
+    --max_det 300 \
     --debug_n 10 \
     --device 0 \
     --batch 1
