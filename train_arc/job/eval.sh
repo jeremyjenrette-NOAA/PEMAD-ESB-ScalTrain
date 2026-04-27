@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH -J eval_yolo
 #SBATCH --account=sharkpulse
-#SBATCH --partition=a30_normal_q
+#SBATCH --partition=normal_q
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:0
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --mem=128G
 #SBATCH --time=08:00:00
 #SBATCH --output=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/eval_yolo_%j.out
 #SBATCH --error=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/eval_yolo_%j.err
@@ -24,6 +24,7 @@ YEAR=2224
 MODEL=check/yolo12n.pt
 JOB=370283
 LABEL=scallop
+CUDA_VISIBLE_DEVICES=-1
 # ────────────────────────────────────────────────────────
 # Derive model tag exactly like run_yolo.py does
 MODEL_TAG=$(basename "$MODEL" .pt | tr '.-' '__')
@@ -35,6 +36,12 @@ RUN_DIR="${PROJECT_DIR}/${RUN_NAME}"
 BEST_WEIGHTS="${RUN_DIR}/weights/best.pt"
 
 echo "=== Evaluation start ==="
+
+source config/write_val.sh
+
+VAL_IMG_CSV="${RUN_DIR}/eval/val_images${YEAR}_${MODEL_TAG}.csv"
+
+write_val_image_csv "data${YEAR}/yolo" "$VAL_IMG_CSV"
 
 srun python config/eval_yolo_detections_hung.py \
     --year ${YEAR} \
@@ -51,5 +58,5 @@ srun python config/eval_yolo_detections_hung.py \
     --match_iou 0.1 \
     --max_det 300 \
     --debug_n 10 \
-    --device 0 \
-    --batch 1
+    --device cpu \
+    --batch 4

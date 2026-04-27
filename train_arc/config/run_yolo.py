@@ -6,7 +6,6 @@ from pathlib import Path
 
 from ultralytics import YOLO
 
-
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Train YOLO on scallop datasets by year.")
     ap.add_argument("--year", type=int, required=True, help="Dataset year, e.g. 2022")

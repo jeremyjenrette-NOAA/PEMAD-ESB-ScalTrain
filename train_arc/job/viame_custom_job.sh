@@ -25,7 +25,7 @@ YEAR=2224
 DATA_ROOT=data
 
 BASE_DIR="/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc"
-JOB_OUT_DIR="${BASE_DIR}/output/${YEAR}star_viame_${SLURM_JOB_ID}"
+JOB_OUT_DIR="${BASE_DIR}/output/${YEAR}scallop_viame_${SLURM_JOB_ID}"
 TRUTH_DIR="${BASE_DIR}/${DATA_ROOT}${YEAR}/viame_truth"
 
 TRAIN_JSON="${TRUTH_DIR}/training_truth.json"
@@ -88,6 +88,12 @@ echo "Resolved PRED_DIR: ${PRED_DIR}"
 ls -lah "${PRED_DIR}"
 
 mkdir -p "${JOB_OUT_DIR}/eval"
+
+source config/write_val.sh
+
+VAL_IMG_CSV="${JOB_OUT_DIR}/eval/val_images${YEAR}_cas.csv"
+
+write_val_image_csv "data${YEAR}/yolo" "$VAL_IMG_CSV"
 
 srun python ${BASE_DIR}/config/eval_viame_detections_hung.py \
   --year ${YEAR} \

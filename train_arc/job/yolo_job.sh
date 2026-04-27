@@ -59,6 +59,12 @@ fi
 
 echo "=== Eval start ==="
 
+source config/write_val.sh
+
+VAL_IMG_CSV="${RUN_DIR}/eval/val_images${YEAR}_${MODEL_TAG}.csv"
+
+write_val_image_csv "data${YEAR}/yolo" "$VAL_IMG_CSV"
+
 srun python config/eval_yolo_detections_hung.py \
     --year ${YEAR} \
     --model_name ${MODEL_TAG} \
