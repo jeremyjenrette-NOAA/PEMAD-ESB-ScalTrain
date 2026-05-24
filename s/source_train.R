@@ -15,8 +15,10 @@ suppressPackageStartupMessages({
 # -----------------------------
 # User settings
 # -----------------------------
-BASE_IMG_PATH <- "/home/jjenrette/HabcamDS2/data/habcam/proc/Images"
-YEAR          <- 2022
+BASE_IMG_PATH <- "/home/jeremy_jenrette/habcam_bucket/NEFSC/HabCam Survey/habcam/proc/Images"
+WRITE_IMG_PATH <- "/home/jeremy_jenrette/habcam_bucket/NEFSC/HabCam\\ Survey/habcam/proc/Images"
+YEAR          <- 2015
+zer           <- FALSE
 SCALLOP_CLASS = c(185, 515, 197, 207, 920, 213, 912, 916, 525, 919, 215, 915)
 
 # Option A: path to the year’s annotations text file (if you want script to load it)
@@ -25,9 +27,16 @@ ANNOT_FILE <- NULL
 # ANNOT_FILE <- "/path/to/annotations_2022.txt"
 
 # Option B: if you already have `dat` in memory, leave ANNOT_FILE as NULL.
-AnnHeader=c("annotation_id","image_id","scope_id","category_id","geometry_text","thegeom","annotator_id","assignment_id","timestamp","class_id","deprecated","geometry_id","imagename","assignment_num","percent_cover","comment","source","data_identifier")
-Ann=read.table(file=paste0("../data/raw/annotations_",YEAR,".txt"), fill=TRUE,sep="\t",na.strings=c("\\N", NA),col.names=AnnHeader,stringsAsFactors =FALSE)
-dat_scallop = subset(Ann, class_id %in% SCALLOP_CLASS)
+# AnnHeader=c("annotation_id","image_id","scope_id","category_id","geometry_text","thegeom","annotator_id","assignment_id","timestamp","class_id","deprecated","geometry_id","imagename","assignment_num","percent_cover","comment","source","data_identifier")
+# Ann=read.table(file=paste0("../data/raw/annotations_",YEAR,".txt"), fill=TRUE,sep="\t",na.strings=c("\\N", NA),col.names=AnnHeader,stringsAsFactors =FALSE)
+# dat_scallop = subset(Ann, class_id %in% SCALLOP_CLASS)
+
+year = as.character(YEAR)
+
+if (zer) dat_scallop = read.csv(paste0("../data/raw/", year, "_zero.csv")) else {
+  dat_scallop = read.csv(paste0("../data/raw/", year, "_annotations.csv")) %>%
+    rename(imagename = IMAGE_NAME)
+}
 
 # -----------------------------
 # Helpers
@@ -121,6 +130,9 @@ audit <- img_list %>%
   mutate(
     expected_path = map_chr(imagename, build_expected_path, base_path = BASE_IMG_PATH)
   ) %>%
+  mutate(
+    write_path = map_chr(imagename, build_expected_path, base_path = WRITE_IMG_PATH)
+  ) %>%
   bind_cols(safe_file_info(.$expected_path)) %>%
   mutate(
     year_from_name = suppressWarnings(as.integer(str_sub(parse_imagename(imagename)$date_yyyymmdd, 1, 4))),
@@ -179,13 +191,17 @@ print(head(missing_tbl, 20))
 
 DEST_DIR <- "../data/raw"
 
-manifest <- file.path(DEST_DIR, "sources_2022tr.txt")
+if (!zer) OUT_FILE <- paste0("sources_", year, "tr.txt") else {
+  OUT_FILE <- paste0("sources_", year, "_zero.txt")
+}
+
+manifest <- file.path(DEST_DIR, OUT_FILE)
 
 # Write source paths only (1 line per image)
 audit_year %>%
   filter(exists) %>%
-  distinct(expected_path) %>%
-  pull(expected_path) %>%
+  distinct(write_path) %>%
+  pull(write_path) %>%
   writeLines(manifest)
 
 cat("Wrote manifest:", manifest, "\n")
