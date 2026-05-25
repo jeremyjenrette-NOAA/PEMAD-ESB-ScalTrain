@@ -54,12 +54,23 @@ crop_and_save <- function(src_path, out_path, side) {
 }
 
 # ---------------------------------------------------------
+# Helper: Load Path Mapping from Manifest
+# ---------------------------------------------------------
+load_path_mapping <- function(txt_file) {
+  cat(sprintf("📄 Loading source paths from %s...\n", txt_file))
+  paths <- readLines(txt_file, warn = FALSE)
+  paths <- paths[paths != ""] # Remove empty lines
+  # Create a named vector where names are the basenames (e.g., "image.png")
+  # and values are the full paths.
+  setNames(paths, basename(paths))
+}
+
+# ---------------------------------------------------------
 # Helper: Visualize a Subset of Annotations
 # ---------------------------------------------------------
-visualize_annotations <- function(df, img_dir, out_pdf, n = 5) {
+visualize_annotations <- function(df, out_img_dir, out_pdf, n = 5) {
   cat(sprintf("\n🎨 Generating validation visualizations for %d images...\n", n))
   
-  # Get unique images that actually have annotations
   valid_images <- unique(df$image)
   if (length(valid_images) == 0) {
     cat("⚠️ No annotations available to visualize.\n")
@@ -71,20 +82,18 @@ visualize_annotations <- function(df, img_dir, out_pdf, n = 5) {
   pdf(out_pdf, width = 10, height = 8)
   
   for (img_name in sample_imgs) {
-    img_path <- file.path(img_dir, img_name)
+    # Read from the newly split output directory for validation
+    img_path <- file.path(out_img_dir, img_name)
     if (!file.exists(img_path)) next
     
-    # Read image for plotting
     im <- image_read(img_path)
     info <- image_info(im)
     w <- info$width
     h <- info$height
     img_grob <- rasterGrob(as.raster(im), interpolate = FALSE)
     
-    # Subset annotations for this image
     sub_df <- df %>% filter(image == img_name)
     
-    # Plot using ggplot2 with reversed Y-axis (top-left origin)
     p <- ggplot() +
       annotation_custom(img_grob, xmin = 0, xmax = w, ymin = h, ymax = 0) +
       geom_rect(
@@ -109,11 +118,13 @@ visualize_annotations <- function(df, img_dir, out_pdf, n = 5) {
 # ---------------------------------------------------------
 # Main Processing: Annotations
 # ---------------------------------------------------------
-process_annotations <- function(csv_path, img_dir, out_img_dir, out_csv, side, visualize, vis_n) {
+process_annotations <- function(csv_path, src_txt, out_img_dir, out_csv, side, visualize, vis_n) {
   dir.create(out_img_dir, recursive = TRUE, showWarnings = FALSE)
   dir.create(dirname(out_csv), recursive = TRUE, showWarnings = FALSE)
   
-  cat(sprintf("\n📦 Loading annotations from %s...\n", csv_path))
+  path_mapping <- load_path_mapping(src_txt)
+  
+  cat(sprintf("📦 Loading annotations from %s...\n", csv_path))
   df <- read_csv(csv_path, show_col_types = FALSE)
   
   df <- df %>%
@@ -132,35 +143,33 @@ process_annotations <- function(csv_path, img_dir, out_img_dir, out_csv, side, v
   df <- df %>% filter(!is.na(TLx) & !is.na(image))
   unique_images <- unique(df$image)
   
-  cat(sprintf("\n✂️ Splitting %d ANNOTATED images (%s side)...\n", length(unique_images), toupper(side)))
+  cat(sprintf("\n✂️ Splitting %d ANNOTATED images (%s side) directly from source paths...\n", length(unique_images), toupper(side)))
   pb <- progress_bar$new(total = length(unique_images), format = "[:bar] :percent :eta")
   
   new_rows_list <- list()
   
   for (fname in unique_images) {
     pb$tick()
-    src <- file.path(img_dir, fname)
-    if (!file.exists(src)) next
+    
+    # Look up full path directly from the manifest
+    src <- path_mapping[fname]
+    
+    if (is.na(src) || !file.exists(src)) next
     
     out_path <- file.path(out_img_dir, fname)
     
-    # Crop the image and get the offset coordinate math
     crop_data <- crop_and_save(src, out_path, side)
     mid <- crop_data$mid
     offset <- crop_data$offset
     
-    # 🧠 ADJUST COORDINATES
     sub <- df %>% 
       filter(image == fname) %>%
       mutate(
-        # Subtract the offset (0 if left, w/2 if right)
         TLx = TLx - offset,
         BRx = BRx - offset
       ) %>%
-      # Ensure boxes are actually on the chosen side
       filter(BRx > 0 & TLx < mid) %>%
       mutate(
-        # Clip coordinates so they don't bleed off the edge of the new image
         TLx = pmax(TLx, 0),
         BRx = pmin(BRx, mid),
         bw = BRx - TLx,
@@ -185,7 +194,6 @@ process_annotations <- function(csv_path, img_dir, out_img_dir, out_csv, side, v
   write_csv(new_df, out_csv, na = "")
   cat(sprintf("\n💾 Saved %d mapped annotations to → %s\n", nrow(new_df), out_csv))
   
-  # TRIGGER VISUALIZATION
   if (visualize && nrow(new_df) > 0) {
     vis_pdf_path <- file.path(dirname(out_csv), sprintf("validation_plot_%s.pdf", side))
     visualize_annotations(new_df, out_img_dir, vis_pdf_path, vis_n)
@@ -195,23 +203,28 @@ process_annotations <- function(csv_path, img_dir, out_img_dir, out_csv, side, v
 # ---------------------------------------------------------
 # Main Processing: Zeros
 # ---------------------------------------------------------
-process_zeros <- function(csv_path, img_dir, out_img_dir, out_csv, side) {
+process_zeros <- function(csv_path, src_txt, out_img_dir, out_csv, side) {
   dir.create(out_img_dir, recursive = TRUE, showWarnings = FALSE)
   dir.create(dirname(out_csv), recursive = TRUE, showWarnings = FALSE)
   
-  cat(sprintf("\n📦 Loading zero-annotations from %s...\n", csv_path))
+  path_mapping <- load_path_mapping(src_txt)
+  
+  cat(sprintf("📦 Loading zero-annotations from %s...\n", csv_path))
   df <- read_csv(csv_path, show_col_types = FALSE)
   zero_images <- unique(na.omit(df$imagename))
   
-  cat(sprintf("\n✂️ Splitting %d ZERO images (%s side)...\n", length(zero_images), toupper(side)))
+  cat(sprintf("\n✂️ Splitting %d ZERO images (%s side) directly from source paths...\n", length(zero_images), toupper(side)))
   pb <- progress_bar$new(total = length(zero_images), format = "[:bar] :percent :eta")
   
   new_rows_list <- list()
   
   for (fname in zero_images) {
     pb$tick()
-    src <- file.path(img_dir, fname)
-    if (!file.exists(src)) next
+    
+    # Look up full path directly from the manifest
+    src <- path_mapping[fname]
+    
+    if (is.na(src) || !file.exists(src)) next
     
     out_path <- file.path(out_img_dir, fname)
     crop_and_save(src, out_path, side)
@@ -235,12 +248,12 @@ process_zeros <- function(csv_path, img_dir, out_img_dir, out_csv, side) {
 main <- function() {
   option_list <- list(
     make_option("--ann_csv", type = "character"),
-    make_option("--ann_img_dir", type = "character"),
+    make_option("--ann_src_txt", type = "character", help = "Path to manifest text file containing absolute paths to annotated images"),
     make_option("--out_ann_img_dir", type = "character"),
     make_option("--out_ann_csv", type = "character"),
     
     make_option("--zero_csv", type = "character"),
-    make_option("--zero_img_dir", type = "character"),
+    make_option("--zero_src_txt", type = "character", help = "Path to manifest text file containing absolute paths to zero images"),
     make_option("--out_zero_img_dir", type = "character"),
     make_option("--out_zero_csv", type = "character"),
     
@@ -252,16 +265,16 @@ main <- function() {
   parser <- OptionParser(option_list = option_list)
   opt <- parse_args(parser)
   
-  required_args <- c("ann_csv", "ann_img_dir", "out_ann_img_dir", "out_ann_csv", 
-                     "zero_csv", "zero_img_dir", "out_zero_img_dir", "out_zero_csv", "side")
+  required_args <- c("ann_csv", "ann_src_txt", "out_ann_img_dir", "out_ann_csv", 
+                     "zero_csv", "zero_src_txt", "out_zero_img_dir", "out_zero_csv", "side")
   
   if (any(sapply(required_args, function(x) is.null(opt[[x]])))) {
     print_help(parser)
     stop("Missing required arguments.", call. = FALSE)
   }
   
-  process_annotations(opt$ann_csv, opt$ann_img_dir, opt$out_ann_img_dir, opt$out_ann_csv, opt$side, opt$visualize, opt$vis_n)
-  process_zeros(opt$zero_csv, opt$zero_img_dir, opt$out_zero_img_dir, opt$out_zero_csv, opt$side)
+  process_annotations(opt$ann_csv, opt$ann_src_txt, opt$out_ann_img_dir, opt$out_ann_csv, opt$side, opt$visualize, opt$vis_n)
+  process_zeros(opt$zero_csv, opt$zero_src_txt, opt$out_zero_img_dir, opt$out_zero_csv, opt$side)
   
   cat("\n✅ All processing complete!\n")
 }

@@ -16,9 +16,9 @@ suppressPackageStartupMessages({
 # User settings
 # -----------------------------
 BASE_IMG_PATH <- "/home/jeremy_jenrette/habcam_bucket/NEFSC/HabCam Survey/habcam/proc/Images"
-WRITE_IMG_PATH <- "/home/jeremy_jenrette/habcam_bucket/NEFSC/HabCam\\ Survey/habcam/proc/Images"
-YEAR          <- 2015
-zer           <- FALSE
+WRITE_IMG_PATH <- "/home/jeremy_jenrette/habcam_bucket/NEFSC/HabCam Survey/habcam/proc/Images"
+YEAR          <- 2023
+zer           <- TRUE
 SCALLOP_CLASS = c(185, 515, 197, 207, 920, 213, 912, 916, 525, 919, 215, 915)
 
 # Option A: path to the year’s annotations text file (if you want script to load it)
