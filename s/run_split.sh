@@ -24,6 +24,7 @@ mkdir -p "${LOCAL_OUT_DIR}/${YEAR}tr_split"
 mkdir -p "${LOCAL_OUT_DIR}/${YEAR}_zero_split"
 
 # Run Python targeting the LOCAL directories
+# Run Python targeting the LOCAL directories
 python split_script.py \
     --ann_csv "${RAW_DIR}/${YEAR}_annotations.csv" \
     --ann_src_txt "${RAW_DIR}/sources_${YEAR}tr.txt" \
@@ -33,7 +34,8 @@ python split_script.py \
     --zero_src_txt "${RAW_DIR}/sources_${YEAR}_zero.txt" \
     --out_zero_img_dir "${LOCAL_OUT_DIR}/${YEAR}_zero_split" \
     --out_zero_csv "${LOCAL_OUT_DIR}/${YEAR}_zero.csv" \
-    --side "${SIDE}"
+    --side "${SIDE}" \
+    --skip_images
 
 echo "☁️ Uploading results to Google Cloud Storage..."
 # Bulk upload everything in parallel (-m) to the bucket

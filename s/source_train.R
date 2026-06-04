@@ -15,9 +15,9 @@ suppressPackageStartupMessages({
 # -----------------------------
 # User settings
 # -----------------------------
-BASE_IMG_PATH <- "/home/user/habcam_bucket/NEFSC/HabCam Survey/habcam/proc/Images"
-WRITE_IMG_PATH <- "/home/user/habcam_bucket/NEFSC/HabCam Survey/habcam/proc/Images"
-YEAR          <- 2024
+BASE_IMG_PATH <- "/home/user/habcam_bucket/NEFSC/HabCam Survey/habcam/proc/Scall_Anno/2026tr_split/"
+WRITE_IMG_PATH <- "/home/user/habcam_bucket/NEFSC/HabCam Survey/habcam/proc/Scall_Anno/2026tr_split/"
+YEAR          <- 2026
 zer           <- FALSE
 SCALLOP_CLASS = c(185, 515, 197, 207, 920, 213, 912, 916, 525, 919, 215, 915)
 
@@ -35,7 +35,7 @@ year = as.character(YEAR)
 
 if (zer) dat_scallop = read.csv(paste0("../data/raw/", year, "_zero.csv")) else {
   dat_scallop = read.csv(paste0("../data/raw/", year, "_annotations.csv")) %>%
-    rename(imagename = IMAGE_NAME)
+    rename(imagename = image)
 }
 
 # -----------------------------

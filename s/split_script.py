@@ -43,13 +43,14 @@ def load_path_mapping(txt_file):
                 mapping[filename] = line
     return mapping
 
-def crop_and_save(src_path, out_path, side):
+def process_image(src_path, out_path, side, skip_images):
     """
-    Crops the image down the middle based on the designated side.
-    Returns the midpoint and offset for bounding box calculations.
+    Reads image dimensions to calculate bounding box offsets.
+    If skip_images is False, it also crops and saves the image to disk.
     Returns (None, None, None, None) if the image is corrupted or unreadable.
     """
     try:
+        # PIL lazily loads the header here, which is extremely fast for getting dimensions
         with Image.open(src_path) as im:
             w, h = im.size
             mid = w / 2
@@ -63,28 +64,30 @@ def crop_and_save(src_path, out_path, side):
                 offset = mid
                 new_w = w - mid
             
-            cropped_im = im.crop(crop_box)
-            cropped_im.save(out_path)
+            # Only perform the heavy pixel crop/save if we aren't skipping images
+            if not skip_images:
+                cropped_im = im.crop(crop_box)
+                cropped_im.save(out_path)
             
             return mid, offset, new_w, h
             
     except Exception as e:
-        # Catch PIL.UnidentifiedImageError, OSError, or any FUSE network drops
         tqdm.write(f"\n[WARN] Skipping unreadable image {Path(src_path).name}: {e}")
         return None, None, None, None
 
-def process_annotations(csv_path, src_txt, out_img_dir, out_csv, side):
-    """Processes the annotated images, applies bbox math, splits, and remaps."""
-    out_img_dir = Path(out_img_dir)
-    out_img_dir.mkdir(parents=True, exist_ok=True)
+def process_annotations(csv_path, src_txt, out_img_dir, out_csv, side, skip_images):
+    """Processes the annotated images, applies bbox math, splits, and remaps while retaining metadata."""
+    if not skip_images:
+        out_img_dir = Path(out_img_dir)
+        out_img_dir.mkdir(parents=True, exist_ok=True)
+        
     Path(out_csv).parent.mkdir(parents=True, exist_ok=True)
-
     path_mapping = load_path_mapping(src_txt)
 
     print(f"📦 Loading annotations from {csv_path}...")
     df = pd.read_csv(csv_path)
 
-    # Normalize columns
+    # Normalize standard columns while keeping all metadata columns intact
     if "IMAGE_NAME" in df.columns:
         df = df.rename(columns={"IMAGE_NAME": "image", "CLASS_NAME": "label"})
     
@@ -105,26 +108,22 @@ def process_annotations(csv_path, src_txt, out_img_dir, out_csv, side):
     df["BRy"] = [b[3] for b in bounds]
     
     df = df.dropna(subset=["TLx", "TLy", "BRx", "BRy", "image"])
-    
-    # Filter for unique images that are present in the manifest and exist on disk
     unique_images = [img for img in df["image"].unique() if img in path_mapping and Path(path_mapping[img]).exists()]
 
-    new_rows = []
+    processed_dfs = []
 
-    print(f"\n✂️ Splitting {len(unique_images)} ANNOTATED images ({side.upper()} side)...")
+    print(f"\n✂️ Processing {len(unique_images)} ANNOTATED images ({side.upper()} side)...")
     for fname in tqdm(unique_images):
         src = path_mapping[fname]
-        out_path = out_img_dir / fname
+        out_path = out_img_dir / fname if not skip_images else None
         
-        # Capture the new width (new_w) and height (h)
-        crop_result = crop_and_save(src, out_path, side)
-        
-        # If the image was unreadable, skip it and move to the next one
+        crop_result = process_image(src, out_path, side, skip_images)
         if crop_result[0] is None:
             continue
             
         mid, offset, new_w, h = crop_result
 
+        # Isolate the rows for this specific image
         sub = df[df["image"] == fname].copy()
         
         # Shift X coordinates
@@ -133,7 +132,7 @@ def process_annotations(csv_path, src_txt, out_img_dir, out_csv, side):
         
         # Filter out boxes that are entirely on the wrong side
         sub = sub[sub["BRx"] > 0].copy()
-        sub = sub[sub["TLx"] < new_w].copy() # FIXED: strictly use the new image width
+        sub = sub[sub["TLx"] < new_w].copy()
         
         # 🔥 APPLY STRICT 4-WAY CLIPPING
         sub["TLx"] = sub["TLx"].clip(lower=0)
@@ -146,59 +145,77 @@ def process_annotations(csv_path, src_txt, out_img_dir, out_csv, side):
         sub["bh"] = sub["BRy"] - sub["TLy"]
         sub = sub[(sub["bw"] > 1) & (sub["bh"] > 1)]
 
-        # 🔥 MISSING LOGIC RESTORED: Append surviving rows to our list
-        for _, r in sub.iterrows():
-            new_rows.append({
-                "image": fname,
-                "TLx": round(r["TLx"], 2),
-                "TLy": round(r["TLy"], 2),
-                "BRx": round(r["BRx"], 2),
-                "BRy": round(r["BRy"], 2),
-                "label": r["label"]
-            })
+        # Drop the temporary calculation columns and append the surviving dataframe
+        if not sub.empty:
+            sub = sub.drop(columns=["bw", "bh"])
+            
+            # Reorder columns to put image/bbox at the front, followed by all metadata
+            cols = ["image", "TLx", "TLy", "BRx", "BRy", "label"]
+            other_cols = [c for c in sub.columns if c not in cols]
+            sub = sub[cols + other_cols]
+            
+            processed_dfs.append(sub)
 
-    new_df = pd.DataFrame(new_rows)
-    new_df.to_csv(out_csv, index=False)
-    print(f"💾 Saved {len(new_df)} mapped annotations to → {out_csv}")
+    if processed_dfs:
+        new_df = pd.concat(processed_dfs, ignore_index=True)
+        # Round the bounding box coordinates
+        new_df[["TLx", "TLy", "BRx", "BRy"]] = new_df[["TLx", "TLy", "BRx", "BRy"]].round(2)
+        new_df.to_csv(out_csv, index=False)
+        print(f"💾 Saved {len(new_df)} mapped annotations to → {out_csv}")
+    else:
+        print("⚠️ No annotations survived the filtering and splitting process.")
 
-def process_zeros(csv_path, src_txt, out_img_dir, out_csv, side):
-    """Processes the background images separately."""
-    out_img_dir = Path(out_img_dir)
-    out_img_dir.mkdir(parents=True, exist_ok=True)
+def process_zeros(csv_path, src_txt, out_img_dir, out_csv, side, skip_images):
+    """Processes the background images separately while retaining metadata."""
+    if not skip_images:
+        out_img_dir = Path(out_img_dir)
+        out_img_dir.mkdir(parents=True, exist_ok=True)
+        
     Path(out_csv).parent.mkdir(parents=True, exist_ok=True)
-
     path_mapping = load_path_mapping(src_txt)
 
     print(f"\n📦 Loading zero-annotations from {csv_path}...")
     df = pd.read_csv(csv_path)
     
     img_col = "imagename" if "imagename" in df.columns else "IMAGE_NAME"
-    zero_images = df[img_col].dropna().unique()
-    
+    if img_col in df.columns:
+        df = df.rename(columns={img_col: "image"})
+        
+    zero_images = df["image"].dropna().unique()
     valid_zeros = [img for img in zero_images if img in path_mapping and Path(path_mapping[img]).exists()]
 
-    new_rows = []
+    processed_dfs = []
 
-    print(f"\n✂️ Splitting {len(valid_zeros)} ZERO images ({side.upper()} side)...")
+    print(f"\n✂️ Processing {len(valid_zeros)} ZERO images ({side.upper()} side)...")
     for fname in tqdm(valid_zeros):
         src = path_mapping[fname]
-        out_path = out_img_dir / fname
+        out_path = out_img_dir / fname if not skip_images else None
         
-        crop_result = crop_and_save(src, out_path, side)
-        
-        # If the image was unreadable, skip it
+        crop_result = process_image(src, out_path, side, skip_images)
         if crop_result[0] is None:
             continue
 
-        new_rows.append({
-            "image": fname,
-            "TLx": None, "TLy": None, "BRx": None, "BRy": None,
-            "label": "background"
-        })
+        # Keep original metadata for zeros
+        sub = df[df["image"] == fname].copy()
+        sub["TLx"] = None
+        sub["TLy"] = None
+        sub["BRx"] = None
+        sub["BRy"] = None
+        sub["label"] = "background"
+        
+        # Reorder columns
+        cols = ["image", "TLx", "TLy", "BRx", "BRy", "label"]
+        other_cols = [c for c in sub.columns if c not in cols]
+        sub = sub[cols + other_cols]
+        
+        processed_dfs.append(sub)
 
-    new_df = pd.DataFrame(new_rows)
-    new_df.to_csv(out_csv, index=False)
-    print(f"💾 Saved {len(new_df)} background entries to → {out_csv}")
+    if processed_dfs:
+        new_df = pd.concat(processed_dfs, ignore_index=True)
+        new_df.to_csv(out_csv, index=False)
+        print(f"💾 Saved {len(new_df)} background entries to → {out_csv}")
+    else:
+        print("⚠️ No zero-annotation images processed.")
 
 def main():
     parser = argparse.ArgumentParser(description="Split Habcam images and apply Square BBox math directly from manifest.")
@@ -215,13 +232,14 @@ def main():
     parser.add_argument("--out_zero_img_dir", required=True)
     parser.add_argument("--out_zero_csv", required=True)
     
-    # Global Argument
+    # Global Arguments
     parser.add_argument("--side", choices=["left", "right"], required=True)
+    parser.add_argument("--skip_images", action="store_true", help="Skip cropping and saving images; only regenerate CSVs.")
 
     args = parser.parse_args()
 
-    process_annotations(args.ann_csv, args.ann_src_txt, args.out_ann_img_dir, args.out_ann_csv, args.side)
-    process_zeros(args.zero_csv, args.zero_src_txt, args.out_zero_img_dir, args.out_zero_csv, args.side)
+    process_annotations(args.ann_csv, args.ann_src_txt, args.out_ann_img_dir, args.out_ann_csv, args.side, args.skip_images)
+    process_zeros(args.zero_csv, args.zero_src_txt, args.out_zero_img_dir, args.out_zero_csv, args.side, args.skip_images)
     
     print("\n✅ All processing complete!")
 
