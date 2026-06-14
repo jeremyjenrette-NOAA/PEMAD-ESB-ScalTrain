@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH -J viame_scal
 #SBATCH --account=sharkpulse
-#SBATCH --partition=a30_normal_q
+#SBATCH --partition=l40s_normal_q
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:2
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
-#SBATCH --time=90:00:00
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=128G
+#SBATCH --time=145:00:00
 #SBATCH --output=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/viame_%j.out
 #SBATCH --error=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/viame_%j.err
 
@@ -21,7 +21,7 @@ source ${VIAME_INSTALL}/setup_viame.sh
 export KWIVER_DEFAULT_LOG_LEVEL=info
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 
-YEAR=2224
+YEAR=2226
 DATA_ROOT=data
 
 BASE_DIR="/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc"
@@ -61,7 +61,7 @@ ${VIAME_INSTALL}/bin/python -m viame.pytorch.netharn.detect_fit \
   --window_dims=640,640 \
   --window_overlap=0.20 \
   --multiscale=False \
-  --batch_size=32 \
+  --batch_size=16 \
   --bstep=4 \
   --lr=0.001 \
   --timeout=1209600 \

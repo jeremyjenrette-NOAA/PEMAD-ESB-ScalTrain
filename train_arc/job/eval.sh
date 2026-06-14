@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH -J eval_yolo
 #SBATCH --account=sharkpulse
-#SBATCH --partition=normal_q
+#SBATCH --partition=t4_normal_q
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:0
-#SBATCH --cpus-per-task=8
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=4
 #SBATCH --mem=128G
-#SBATCH --time=08:00:00
+#SBATCH --time=20:00:00
 #SBATCH --output=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/eval_yolo_%j.out
 #SBATCH --error=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/eval_yolo_%j.err
 
@@ -20,11 +20,11 @@ cd /projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/
 conda activate scallopdet
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 # ─── Run training ───────────────────────────────────────
-YEAR=2224
+YEAR=2226
 MODEL=check/yolo12n.pt
-JOB=370283
+JOB=441288
 LABEL=scallop
-CUDA_VISIBLE_DEVICES=-1
+export CUDA_VISIBLE_DEVICES=0
 # ────────────────────────────────────────────────────────
 # Derive model tag exactly like run_yolo.py does
 MODEL_TAG=$(basename "$MODEL" .pt | tr '.-' '__')
@@ -58,5 +58,5 @@ srun python config/eval_yolo_detections_hung.py \
     --match_iou 0.1 \
     --max_det 300 \
     --debug_n 10 \
-    --device cpu \
+    --device 0 \
     --batch 4

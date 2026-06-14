@@ -86,6 +86,7 @@ def parse_yolo_label_file(
     category_id_lookup: Dict[int, int]
 ) -> List[Dict]:
     anns = []
+    # Gracefully handle missing label files (treating them as empty images)
     if not label_path.exists():
         return anns
 
@@ -140,9 +141,16 @@ def build_coco_split(
     if not images_dir.exists():
         raise FileNotFoundError(f"Missing images dir: {images_dir}")
 
-    label_files = sorted(labels_dir.glob("*.txt"))
-    if not label_files:
-        raise RuntimeError(f"No label txt files found in {labels_dir}")
+    # FLIP LOGIC: Read physical images as the source of truth, not labels
+    image_files = []
+    for ext in IMG_EXTS:
+        image_files.extend(images_dir.glob(f"*{ext}"))
+        image_files.extend(images_dir.glob(f"*{ext.upper()}"))
+        
+    image_files = sorted(list(set(image_files)))
+
+    if not image_files:
+        raise RuntimeError(f"No images found in {images_dir}")
 
     coco = {
         "images": [],
@@ -155,18 +163,18 @@ def build_coco_split(
     image_id = 1
     ann_id = 1
 
-    for label_path in label_files:
-        stem = label_path.stem
-        yolo_img_path = find_image_for_stem(images_dir, stem)
-        if yolo_img_path is None:
-            raise FileNotFoundError(
-                f"No matching image found for label: {label_path}"
-            )
-
+    for yolo_img_path in image_files:
+        stem = yolo_img_path.stem
+        label_path = labels_dir / f"{stem}.txt"
+        
         actual_img_path = resolve_original_image(yolo_img_path, viame_index)
 
-        with Image.open(actual_img_path) as im:
-            img_w, img_h = im.size
+        try:
+            with Image.open(actual_img_path) as im:
+                img_w, img_h = im.size
+        except Exception as e:
+            print(f"Warning: Skipping {actual_img_path} due to read error: {e}")
+            continue
 
         coco["images"].append({
             "id": image_id,
@@ -265,6 +273,7 @@ def main():
     with open(val_out, "w") as f:
         json.dump(val_coco, f, indent=2)
 
+    print(f"\n--- VIAME JSON BUILD SUMMARY ---")
     print(f"Wrote: {train_out}")
     print(f"Wrote: {val_out}")
     print(f"Train images: {len(train_coco['images'])}")

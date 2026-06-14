@@ -8,7 +8,8 @@ write_val_image_csv () {
 
     echo "imagename,img_path" > "$OUT_CSV"
 
-    find "${DATA_ROOT}/images/val" \
+    # Added -L to follow symlinks so they correctly register as -type f
+    find -L "${DATA_ROOT}/images/val" \
         -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" \) \
         | sort \
         | awk -F/ '{print $NF "," $0}' >> "$OUT_CSV"

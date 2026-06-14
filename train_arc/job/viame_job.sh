@@ -1,15 +1,15 @@
 #!/bin/bash
-#SBATCH -J viame_yolo_scal
+#SBATCH -J viame_scal
 #SBATCH --account=sharkpulse
 #SBATCH --partition=a30_normal_q
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=60:00:00
-#SBATCH --output=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/viame_yolo_scal_%j.out
-#SBATCH --error=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/viame_yolo_scal_%j.err
+#SBATCH --time=5:00:00
+#SBATCH --output=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/viame_%j.out
+#SBATCH --error=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/viame_%j.err
 
 module reset
 source ~/.bashrc
