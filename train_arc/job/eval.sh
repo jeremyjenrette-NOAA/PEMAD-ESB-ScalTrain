@@ -52,7 +52,7 @@ srun python config/eval_yolo_detections_hung.py \
     --out_csv ${RUN_DIR}/eval/autotest${YEAR}_${MODEL_TAG}.csv \
     --gt_out_csv ${RUN_DIR}/eval/mantest${YEAR}_${MODEL_TAG}.csv \
     --out_fn_csv ${RUN_DIR}/eval/fn${YEAR}_${MODEL_TAG}.csv \
-    --imgsz 768 \
+    --imgsz 1024 \
     --conf 0.01 \
     --nms_iou 0.65 \
     --match_iou 0.1 \
