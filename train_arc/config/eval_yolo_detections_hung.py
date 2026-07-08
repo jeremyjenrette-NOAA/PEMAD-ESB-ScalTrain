@@ -213,7 +213,7 @@ def main():
             stream=True,
             verbose=False,
             batch=args.batch,
-            half=True
+            quantize=True
         )
 
         for img_path, res in zip(chunk_images, results_iter):
