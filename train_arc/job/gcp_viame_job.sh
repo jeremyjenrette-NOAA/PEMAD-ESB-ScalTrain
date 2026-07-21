@@ -117,9 +117,9 @@ source ${BASE_DIR}/config/write_val.sh
 VAL_IMG_CSV="${JOB_OUT_DIR}/eval/val_images${YEAR}_cas.csv"
 write_val_image_csv "${BASE_DIR}/${DATA_ROOT}/yolo" "$VAL_IMG_CSV"
 
-echo "Executing Hungarian performance evaluations..."
 # Stripped out 'srun' reference execution constraints
-python ${BASE_DIR}/config/eval_viame_detections_hung.py \
+echo "Executing Hungarian performance evaluations..."
+python ${BASE_DIR}/config/eval_viame_detections_hung_crab.py \
   --year ${YEAR} \
   --model_name viame_cascade \
   --pred_dir "${PRED_DIR}" \
@@ -133,7 +133,7 @@ python ${BASE_DIR}/config/eval_viame_detections_hung.py \
   --match_iou 0.1 \
   --max_det 300 \
   --debug_n 10 \
-  --spname "${LABEL}"
+  --spname jonah_crab rock_crab cancer_sp  # Pass all 3 classes space-separated
 
 # ─── 5. Storage Optimization Post-Clean ───────────────────────────────────────
 echo -e "\n=== Step 3: Purging Temporary Cache Files ==="

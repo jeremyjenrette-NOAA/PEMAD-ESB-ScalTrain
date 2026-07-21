@@ -94,29 +94,38 @@ def iou_xyxy(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     union = area_a + area_b - inter
     return (inter / np.maximum(union, 1e-9)).astype(np.float32)
 
-def yolo_txt_to_xyxy(label_txt: Path, img_w: int, img_h: int) -> np.ndarray:
+def yolo_txt_to_xyxy_and_cls(label_txt: Path, img_w: int, img_h: int) -> tuple[np.ndarray, np.ndarray]:
     if not label_txt.exists():
-        return np.zeros((0, 4), dtype=np.float32)
+        return np.zeros((0, 4), dtype=np.float32), np.zeros((0,), dtype=np.int32)
 
     text = label_txt.read_text().strip()
     if not text:
-        return np.zeros((0, 4), dtype=np.float32)
+        return np.zeros((0, 4), dtype=np.float32), np.zeros((0,), dtype=np.int32)
 
     rows = []
+    classes = []
     for line in text.splitlines():
         parts = line.split()
         if len(parts) < 5:
             continue
-        _, xc, yc, bw, bh = map(float, parts[:5])
+        cls_id = int(parts[0])  # Extract class index integer
+        xc, yc, bw, bh = map(float, parts[1:5])
+        
         x1 = (xc - bw / 2) * img_w
         y1 = (yc - bh / 2) * img_h
         x2 = (xc + bw / 2) * img_w
         y2 = (yc + bh / 2) * img_h
+        
         rows.append([x1, y1, x2, y2])
+        classes.append(cls_id)
 
     if not rows:
-        return np.zeros((0, 4), dtype=np.float32)
-    return np.array(rows, dtype=np.float32)
+        return np.zeros((0, 4), dtype=np.float32), np.zeros((0,), dtype=np.int32)
+    return np.array(rows, dtype=np.float32), np.array(classes, dtype=np.int32)
+
+def clean_string_label(raw_label: str) -> str:
+    """Removes erroneous brackets, commas, quotes, and whitespace from class names."""
+    return str(raw_label).replace("[", "").replace("]", "").replace(",", "").replace("'", "").replace('"', "").strip()
 
 def main():
     ap = argparse.ArgumentParser()
@@ -130,7 +139,12 @@ def main():
     ap.add_argument("--match_iou", type=float, default=0.5, help="IoU threshold for TP matching vs GT")
     ap.add_argument("--max_det", type=int, default=600)
     ap.add_argument("--device", default="0")
-    ap.add_argument("--spname", default="scallop")
+    ap.add_argument(
+        "--spname", 
+        nargs="+", 
+        default=["jonah_crab", "rock_crab", "cancer_sp"], 
+        help="List of class names mapped in explicit numerical index order"
+    )
     ap.add_argument("--debug_n", type=int, default=10, help="Print debug for first N images with GT")
     ap.add_argument("--year", type=int, required=True)
     ap.add_argument("--model_name", default="", help="e.g. yolov10n or check/yolov10n.pt (for metadata only)")
@@ -160,7 +174,8 @@ def main():
     # ---------------- Setup Streaming CSV Writers ----------------
     det_cols = [
         "Detectid","Imagename","FrameID","TLx","TLy","BRx","BRy","Conf","Len","Spname",
-        "ConfPairs","boxsize","truedetect","iu","index","man","bin"
+        "ConfPairs","boxsize","truedetect","iu","index","man","bin",
+        "conf_jonah_crab", "conf_rock_crab", "conf_cancer_sp", "gt_label"
     ]
     gt_cols = det_cols + ["gt_id"]
     fn_cols = ["Imagename","FrameID","TLx","TLy","BRx","BRy","Spname","boxsize","missed"]
@@ -195,9 +210,10 @@ def main():
     fp_count = 0
     max_iu_found = 0.0
 
+    # Sanitize classes dynamically to handle stray shell bracket characters
+    class_names = [clean_string_label(name) for name in args.spname]
+
     # ---------------- Process Image Stream in Chunks ----------------
-    # Feed the model EXACTLY the batch size. This prevents Ultralytics from 
-    # pre-allocating massive VRAM tensors under the hood.
     chunk_size = args.batch if args.batch and args.batch > 0 else 4
     
     for chunk_start in range(0, len(images), chunk_size):
@@ -228,7 +244,7 @@ def main():
                 continue
 
             gt_txt = lab_dir / f"{img_path.stem}.txt"
-            gt_xyxy = yolo_txt_to_xyxy(gt_txt, w, h)
+            gt_xyxy, gt_cls = yolo_txt_to_xyxy_and_cls(gt_txt, w, h)
 
             # Write Ground Truths incrementally
             if gt_writer:
@@ -237,11 +253,15 @@ def main():
                     gboxsize = max(0.0, gx2 - gx1) * max(0.0, gy2 - gy1)
                     gt_detectid += 1
                     
+                    # Resolve multi-class ground truth name dynamically
+                    g_cls = int(gt_cls[g])
+                    g_name = class_names[g_cls] if g_cls < len(class_names) else f"unknown_{g_cls}"
+                    
                     gt_row = {col: "" for col in gt_cols}
                     gt_row.update({
                         "Detectid": gt_detectid, "Imagename": fname, "FrameID": 0,
                         "TLx": gx1, "TLy": gy1, "BRx": gx2, "BRy": gy2,
-                        "Conf": 1.0, "Len": 0, "Spname": args.spname,
+                        "Conf": 1.0, "Len": 0, "Spname": g_name,
                         "boxsize": gboxsize, "index": g + 1, "gt_id": g
                     })
                     gt_writer.writerow(gt_row)
@@ -249,9 +269,11 @@ def main():
             if res.boxes is None or len(res.boxes) == 0:
                 pred_xyxy = np.zeros((0, 4), dtype=np.float32)
                 pred_conf = np.zeros((0,), dtype=np.float32)
+                pred_cls = np.zeros((0,), dtype=np.int32)
             else:
                 pred_xyxy = res.boxes.xyxy.cpu().numpy().astype(np.float32)
                 pred_conf = res.boxes.conf.cpu().numpy().astype(np.float32)
+                pred_cls = res.boxes.cls.cpu().numpy().astype(np.int32)
 
             pred_to_gt, pred_to_iou = hungarian_match(pred_xyxy, gt_xyxy, iou_thr=args.match_iou)
             matched_gt = set(pred_to_gt.values())
@@ -278,14 +300,34 @@ def main():
 
                 detectid += 1
                 
+                # Resolve multi-class prediction name dynamically
+                p_cls = int(pred_cls[i])
+                p_name = class_names[p_cls] if p_cls < len(class_names) else f"unknown_{p_cls}"
+
+                # --- Extract Ground Truth species label dynamically if True Positive ---
+                gt_label = ""
+                if truedetect:
+                    g_idx = pred_to_gt[i]
+                    g_cls = int(gt_cls[g_idx])
+                    gt_label = class_names[g_cls] if g_cls < len(class_names) else f"unknown_{g_cls}"
+
+                # --- Map One-Hot Confidences for Downstream Calibrations ---
+                conf_jonah_crab = conf if p_name == "jonah_crab" else 0.0
+                conf_rock_crab = conf if p_name == "rock_crab" else 0.0
+                conf_cancer_sp = conf if p_name == "cancer_sp" else 0.0
+                
                 det_row = {
                     "Detectid": detectid, "Imagename": fname, "FrameID": 0,
                     "TLx": x1, "TLy": y1, "BRx": x2, "BRy": y2,
-                    "Conf": conf, "Len": 0, "Spname": args.spname,
+                    "Conf": conf, "Len": 0, "Spname": p_name,
                     "ConfPairs": conf, "boxsize": boxsize,
                     "truedetect": bool(truedetect), "iu": iu,
                     "index": i + 1, "man": "",
-                    "bin": int(round(conf * 100)) if conf == conf else ""
+                    "bin": int(round(conf * 100)) if conf == conf else "",
+                    "conf_jonah_crab": conf_jonah_crab,
+                    "conf_rock_crab": conf_rock_crab,
+                    "conf_cancer_sp": conf_cancer_sp,
+                    "gt_label": gt_label
                 }
                 det_writer.writerow(det_row)
 
@@ -297,19 +339,20 @@ def main():
                     gx1, gy1, gx2, gy2 = gt_xyxy[g].tolist()
                     gboxsize = max(0.0, gx2 - gx1) * max(0.0, gy2 - gy1)
                     
+                    # Resolve multi-class false negative name dynamically
+                    fn_cls = int(gt_cls[g])
+                    fn_name = class_names[fn_cls] if fn_cls < len(class_names) else f"unknown_{fn_cls}"
+                    
                     fn_writer.writerow({
                         "Imagename": fname, "FrameID": 0,
                         "TLx": gx1, "TLy": gy1, "BRx": gx2, "BRy": gy2,
-                        "Spname": args.spname, "boxsize": gboxsize, "missed": True
+                        "Spname": fn_name, "boxsize": gboxsize, "missed": True
                     })
 
-        # --- EXPLICIT GARBAGE COLLECTION ---
-        # This prevents PyTorch and Ultralytics from endlessly hoarding memory across chunks
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    # Close file handles to finalize saving
     f_det.close()
     if f_gt:
         f_gt.close()

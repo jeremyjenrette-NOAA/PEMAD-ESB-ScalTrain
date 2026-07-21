@@ -68,7 +68,7 @@ python config/run_yolo.py \
     --data_root "${YOLO_ROOT}" \
     --model ${MODEL} \
     --label ${LABEL} \
-    --epochs 20 \
+    --epochs 100 \
     --imgsz 1024 \
     --batch 16 \
     --workers 0 \
@@ -92,7 +92,8 @@ echo "Building evaluation tracking manifests..."
 write_val_image_csv "${YOLO_ROOT}" "$VAL_IMG_CSV"
 
 # Swapped out 'srun' for the evaluation step execution
-python config/eval_yolo_detections_hung.py \
+# Update Python evaluation script execution parameters at the bottom:
+python config/eval_yolo_detections_hung_crab.py \
     --year ${YEAR} \
     --model_name ${MODEL_TAG} \
     --run_dir ${RUN_DIR} \
@@ -109,6 +110,6 @@ python config/eval_yolo_detections_hung.py \
     --debug_n 10 \
     --device 0 \
     --batch 4 \
-    --spname "${LABEL}"
+    --spname jonah_crab rock_crab cancer_sp  # Pass all 3 classes space-separated
 
 echo "=== Pipeline Completed Successfully ==="

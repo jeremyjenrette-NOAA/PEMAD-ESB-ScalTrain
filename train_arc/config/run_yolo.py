@@ -34,9 +34,10 @@ def parse_args() -> argparse.Namespace:
         default="data{year}/yolo",
         help="Template for dataset root relative to train_arc. Use {year} placeholder.",
     )
+    # Change this line inside parse_args():
     ap.add_argument(
         "--yaml_name",
-        default="label.yaml",
+        default="data.yaml",  # Updated from label.yaml to match dataset builder output
         help="YAML filename under the year-specific yolo folder.",
     )
     ap.add_argument(

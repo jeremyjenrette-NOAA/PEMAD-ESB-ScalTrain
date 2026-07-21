@@ -33,7 +33,7 @@ LABEL=crab
 DATA_ROOT="crabdata2426"
 
 BASE_DIR="/home/user/PEMAD-ESB-ScalTrain/train_arc"
-JOB_ID="gcp_20260707_184753" 
+JOB_ID="gcp_20260713_182646" 
 JOB_OUT_DIR="${BASE_DIR}/output/${YEAR}${LABEL}_viame_${JOB_ID}"
 
 # Location of your input MSCOCO formatting truth tracking JSON files
@@ -64,7 +64,7 @@ write_val_image_csv "${BASE_DIR}/${DATA_ROOT}/yolo" "$VAL_IMG_CSV"
 
 echo "Executing Hungarian performance evaluations..."
 # Stripped out 'srun' reference execution constraints
-python ${BASE_DIR}/config/eval_viame_detections_hung.py \
+python ${BASE_DIR}/config/eval_viame_detections_hung_crab.py \
   --year ${YEAR} \
   --model_name viame_cascade \
   --pred_dir "${PRED_DIR}" \
@@ -78,7 +78,7 @@ python ${BASE_DIR}/config/eval_viame_detections_hung.py \
   --match_iou 0.1 \
   --max_det 300 \
   --debug_n 10 \
-  --spname "${LABEL}"
+  --spname jonah_crab rock_crab cancer_sp
 
 # ─── 5. Storage Optimization Post-Clean ───────────────────────────────────────
 echo -e "\n=== Step 3: Purging Temporary Cache Files ==="

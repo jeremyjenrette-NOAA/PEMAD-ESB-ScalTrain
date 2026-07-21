@@ -25,7 +25,7 @@ MODEL=check/yolo12n.pt
 
 # FIX 1: Use $(pwd) to force an absolute path. 
 # This stops Ultralytics from dropping things inside 'runs/detect/'
-PROJECT="2426crab_yolo12n_gcp_20260707_134554"
+PROJECT="2426crab_yolo12n_gcp_20260708_205743"
 PROJECT_DIR="$(pwd)/output/${PROJECT}"
 YOLO_ROOT="crabdata2426/yolo"
 
