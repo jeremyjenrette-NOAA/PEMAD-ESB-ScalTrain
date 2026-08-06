@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -118,7 +119,7 @@ def clean_string_label(raw_label: str) -> str:
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="Generalized VIAME/COCO Hungarian Matching Evaluation")
     ap.add_argument("--pred_dir", required=True, help="Directory with dets_gid_*_v2.mscoco.json files")
     ap.add_argument("--gt_json", required=True, help="validation_truth.json")
     ap.add_argument("--train_json", required=False, default=None, help="training_truth.json for run summary")
@@ -132,8 +133,8 @@ def main():
     ap.add_argument(
         "--spname", 
         nargs="+", 
-        default=["jonah_crab", "rock_crab", "cancer_sp"],
-        help="Fallback class names mapped in explicit COCO numerical index order"
+        default=None,
+        help="Fallback class names mapped in explicit COCO numerical index order if not in GT JSON"
     )
     ap.add_argument("--debug_n", type=int, default=10)
     ap.add_argument("--year", type=int, required=True)
@@ -148,13 +149,16 @@ def main():
     images_by_id, anns_by_image, gt_full = load_coco_gt(gt_json)
     pred_map = load_pred_files(pred_dir)
 
-    # Build dynamic category mapping with strict string sanitization
+    # Build dynamic category mapping
     cat_map = {}
     for cat in gt_full.get("categories", []):
         cat_map[cat["id"]] = clean_string_label(cat["name"])
         
-    if not cat_map:
+    if not cat_map and args.spname:
         cat_map = {i + 1: clean_string_label(name) for i, name in enumerate(args.spname)}
+
+    # Extract unique class list for dynamic confidence columns
+    active_classes = [cat_map[k] for k in sorted(cat_map.keys())] if cat_map else []
 
     det_rows: List[dict] = []
     gt_rows: List[dict] = []
@@ -167,8 +171,6 @@ def main():
     for image_id, im in sorted(images_by_id.items()):
         file_name = im["file_name"]
         fname = Path(file_name).name
-        w = im["width"]
-        h = im["height"]
 
         gt_anns = anns_by_image.get(image_id, [])
         gt_xyxy = np.array([coco_bbox_to_xyxy(a["bbox"]) for a in gt_anns], dtype=np.float32) \
@@ -228,7 +230,7 @@ def main():
             p_cat_id = pred_anns[i].get("category_id")
             p_name = cat_map.get(p_cat_id, f"unknown_{p_cat_id}")
 
-            # --- Extract Ground Truth species label dynamically if True Positive ---
+            # Extract Ground Truth species label dynamically if True Positive
             gt_label = ""
             if truedetect:
                 g_idx = pred_to_gt[i]
@@ -236,13 +238,8 @@ def main():
                 g_cat_id = g_ann.get("category_id")
                 gt_label = cat_map.get(g_cat_id, f"unknown_{g_cat_id}")
 
-            # --- Map One-Hot Confidences for Downstream Calibrations ---
-            conf_jonah_crab = conf if p_name == "jonah_crab" else 0.0
-            conf_rock_crab = conf if p_name == "rock_crab" else 0.0
-            conf_cancer_sp = conf if p_name == "cancer_sp" else 0.0
-
             detectid += 1
-            det_rows.append({
+            row_dict = {
                 "Detectid": detectid,
                 "Imagename": fname,
                 "FrameID": 0,
@@ -260,11 +257,14 @@ def main():
                 "index": i + 1,
                 "man": "",
                 "bin": int(round(conf * 100)) if conf == conf else "",
-                "conf_jonah_crab": conf_jonah_crab,
-                "conf_rock_crab": conf_rock_crab,
-                "conf_cancer_sp": conf_cancer_sp,
                 "gt_label": gt_label
-            })
+            }
+
+            # Map dynamic one-hot confidence columns per species
+            for cls_name in active_classes:
+                row_dict[f"conf_{cls_name}"] = conf if p_name == cls_name else 0.0
+
+            det_rows.append(row_dict)
 
         if args.out_fn_csv:
             for g in range(gt_xyxy.shape[0]):
@@ -286,14 +286,18 @@ def main():
                 })
 
     det_df = pd.DataFrame(det_rows)
-    col_order = [
+    
+    # Construct dynamic column ordering
+    base_cols = [
         "Detectid","Imagename","FrameID","TLx","TLy","BRx","BRy","Conf","Len","Spname",
-        "ConfPairs","boxsize","truedetect","iu","index","man","bin",
-        "conf_jonah_crab", "conf_rock_crab", "conf_cancer_sp", "gt_label"
+        "ConfPairs","boxsize","truedetect","iu","index","man","bin"
     ]
+    dynamic_conf_cols = [f"conf_{cls}" for cls in active_classes]
+    col_order = base_cols + dynamic_conf_cols + ["gt_label"]
+
     for c in col_order:
         if c not in det_df.columns:
-            det_df[c] = 0.0 if "conf_" in c else ""
+            det_df[c] = 0.0 if c.startswith("conf_") else ""
     det_df = det_df[col_order]
 
     out_csv = Path(args.out_csv)
@@ -303,10 +307,6 @@ def main():
 
     if args.gt_out_csv:
         gt_df = pd.DataFrame(gt_rows)
-        base_cols = [
-            "Detectid","Imagename","FrameID","TLx","TLy","BRx","BRy","Conf","Len","Spname",
-            "ConfPairs","boxsize","truedetect","iu","index","man","bin"
-        ]
         for c in base_cols:
             if c not in gt_df.columns:
                 gt_df[c] = ""
@@ -365,8 +365,6 @@ def main():
     if len(det_df):
         print("TP count:", int(det_df["truedetect"].sum()))
         print("FP count:", int((~det_df["truedetect"]).sum()))
-        if det_df["iu"].max() == 0:
-            print("WARNING: iu max is 0.0. This usually means no matched GT boxes at the chosen IoU threshold.")
 
 
 if __name__ == "__main__":

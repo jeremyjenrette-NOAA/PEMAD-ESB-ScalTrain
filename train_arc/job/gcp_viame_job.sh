@@ -1,9 +1,9 @@
 #!/bin/bash
 # ==============================================================================
 # GCP Workstation End-to-End VIAME Training & Evaluation Pipeline
-# Targets: Crab Dataset (2426), single Tesla T4 GPU workflow
+# Targets: single Tesla T4 GPU workflow
 # ==============================================================================
-# nohup ./job/gcp_viame_job.sh > ./log/viame_crab_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+# nohup ./job/gcp_viame_job.sh > ./log/viame_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 # Exit instantly if any nested pipeline step throws an error code
 set -e
 
@@ -28,9 +28,9 @@ export PYTORCH_ALLOC_CONF=expandable_segments:True
 export CUDA_VISIBLE_DEVICES=0
 
 # ─── 2. Parameter & Directory Configurations ──────────────────────────────────
-YEAR=2426
-LABEL=crab
-DATA_ROOT="crabdata2426"
+YEAR=24
+LABEL=star
+DATA_ROOT="star24"
 
 BASE_DIR="/home/user/PEMAD-ESB-ScalTrain/train_arc"
 JOB_ID="gcp_$(date +%Y%m%d_%H%M%S)"
@@ -119,7 +119,7 @@ write_val_image_csv "${BASE_DIR}/${DATA_ROOT}/yolo" "$VAL_IMG_CSV"
 
 # Stripped out 'srun' reference execution constraints
 echo "Executing Hungarian performance evaluations..."
-python ${BASE_DIR}/config/eval_viame_detections_hung_crab.py \
+python ${BASE_DIR}/config/eval_viame_detections_hung_multi.py \
   --year ${YEAR} \
   --model_name viame_cascade \
   --pred_dir "${PRED_DIR}" \
@@ -131,9 +131,9 @@ python ${BASE_DIR}/config/eval_viame_detections_hung_crab.py \
   --conf 0.01 \
   --nms_iou 0.65 \
   --match_iou 0.1 \
-  --max_det 300 \
+  --max_det 30 \
   --debug_n 10 \
-  --spname jonah_crab rock_crab cancer_sp  # Pass all 3 classes space-separated
+  --spname asterias astropecten leptasterias  # Pass all 3 classes space-separated
 
 # ─── 5. Storage Optimization Post-Clean ───────────────────────────────────────
 echo -e "\n=== Step 3: Purging Temporary Cache Files ==="

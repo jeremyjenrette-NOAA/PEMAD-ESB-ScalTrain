@@ -1,9 +1,9 @@
 #!/bin/bash
 # ==============================================================================
 # GCP Workstation End-to-End YOLO Training & Evaluation Pipeline
-# Targets: Crab Dataset (2426), single Tesla T4 GPU workflow
+# Targets: single Tesla T4 GPU workflow
 # ==============================================================================
-# nohup ./job/gcp_yolo_job.sh > ./log/yolo_crab_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+# nohup ./job/gcp_yolo_job.sh > ./log/yolo_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 # Exit instantly if any nested pipeline step throws an error code
 set -e
 
@@ -19,14 +19,14 @@ export PYTORCH_ALLOC_CONF=expandable_segments:True
 export CUDA_VISIBLE_DEVICES=0
 
 # ─── 2. Parameter Configurations ──────────────────────────────────────────────
-YEAR=2426
-LABEL=crab
+YEAR=24
+LABEL=star
 MODEL=check/yolo12n.pt
 
 # FIX 1: Use $(pwd) to force an absolute path. 
 # This stops Ultralytics from dropping things inside 'runs/detect/'
 PROJECT_DIR="$(pwd)/output"
-YOLO_ROOT="crabdata2426/yolo"
+YOLO_ROOT="star24/yolo"
 
 # Generate our unique timestamp
 JOB_ID="gcp_$(date +%Y%m%d_%H%M%S)"
@@ -68,7 +68,7 @@ python config/run_yolo.py \
     --data_root "${YOLO_ROOT}" \
     --model ${MODEL} \
     --label ${LABEL} \
-    --epochs 100 \
+    --epochs 130 \
     --imgsz 1024 \
     --batch 16 \
     --workers 0 \
@@ -93,7 +93,7 @@ write_val_image_csv "${YOLO_ROOT}" "$VAL_IMG_CSV"
 
 # Swapped out 'srun' for the evaluation step execution
 # Update Python evaluation script execution parameters at the bottom:
-python config/eval_yolo_detections_hung_crab.py \
+python config/eval_yolo_detections_hung_multi.py \
     --year ${YEAR} \
     --model_name ${MODEL_TAG} \
     --run_dir ${RUN_DIR} \
@@ -110,6 +110,6 @@ python config/eval_yolo_detections_hung_crab.py \
     --debug_n 10 \
     --device 0 \
     --batch 4 \
-    --spname jonah_crab rock_crab cancer_sp  # Pass all 3 classes space-separated
+    --spname asterias astropecten leptasterias  # Pass all classes space-separated
 
 echo "=== Pipeline Completed Successfully ==="
