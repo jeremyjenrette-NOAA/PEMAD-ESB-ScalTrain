@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 from PIL import Image, ImageDraw
 
+
 def parse_and_shift_line(geom_text, offset):
     """Parses the original line segment and shifts the X coordinates based on the split."""
     if pd.isna(geom_text):

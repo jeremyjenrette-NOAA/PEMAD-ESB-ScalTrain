@@ -15,9 +15,9 @@ suppressPackageStartupMessages({
 # -----------------------------
 # User settings
 # -----------------------------
-BASE_IMG_PATH <- "/home/user/habcam_bucket/NEFSC/HabCam Survey/habcam/proc/Scall_Anno/2026tr_split/"
-WRITE_IMG_PATH <- "/home/user/habcam_bucket/NEFSC/HabCam Survey/habcam/proc/Scall_Anno/2026tr_split/"
-YEAR          <- 2026
+BASE_IMG_PATH <- "/home/user/habcam_bucket/NEFSC/HabCam Survey/lrauv/stella/proc/Images"
+WRITE_IMG_PATH <- "/home/user/habcam_bucket/NEFSC/HabCam\ Survey/lrauv/stella/proc/Images"
+YEAR          <- 2024
 zer           <- FALSE
 SCALLOP_CLASS = c(185, 515, 197, 207, 920, 213, 912, 916, 525, 919, 215, 915)
 
@@ -33,9 +33,9 @@ ANNOT_FILE <- NULL
 
 year = as.character(YEAR)
 
-if (zer) dat_scallop = read.csv(paste0("../data/raw/", year, "_zero.csv")) else {
-  dat_scallop = read.csv(paste0("../data/raw/", year, "_annotations.csv")) %>%
-    rename(imagename = image)
+if (zer) dat_scallop = read.csv(paste0("../data/AUV/", year, "_zero.csv")) else {
+  dat_scallop = read.csv(paste0("../data/AUV/", year, "_annotations.csv")) %>%
+    rename(imagename = IMAGE_NAME)
 }
 
 # -----------------------------
@@ -189,7 +189,7 @@ print(head(missing_tbl, 20))
 # Write files for sharing/debugging
 # -----------------------------
 
-DEST_DIR <- "../data/raw"
+DEST_DIR <- "../data/AUV"
 
 if (!zer) OUT_FILE <- paste0("sources_", year, "tr.txt") else {
   OUT_FILE <- paste0("sources_", year, "_zero.txt")
