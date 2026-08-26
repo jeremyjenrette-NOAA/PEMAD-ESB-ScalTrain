@@ -28,9 +28,9 @@ export PYTORCH_ALLOC_CONF=expandable_segments:True
 export CUDA_VISIBLE_DEVICES=0
 
 # ─── 2. Parameter & Directory Configurations ──────────────────────────────────
-YEAR=24
-LABEL=star
-DATA_ROOT="star24"
+YEAR=2226
+LABEL=data
+DATA_ROOT="data2226"
 
 BASE_DIR="/home/user/PEMAD-ESB-ScalTrain/train_arc"
 JOB_ID="gcp_$(date +%Y%m%d_%H%M%S)"
@@ -131,9 +131,9 @@ python ${BASE_DIR}/config/eval_viame_detections_hung_multi.py \
   --conf 0.01 \
   --nms_iou 0.65 \
   --match_iou 0.1 \
-  --max_det 30 \
+  --max_det 600 \
   --debug_n 10 \
-  --spname asterias astropecten leptasterias  # Pass all 3 classes space-separated
+  --spname scallop  # Pass all classes space-separated
 
 # ─── 5. Storage Optimization Post-Clean ───────────────────────────────────────
 echo -e "\n=== Step 3: Preserving Deployment Package & Purging Heavy Artifacts ==="

@@ -19,14 +19,14 @@ export PYTORCH_ALLOC_CONF=expandable_segments:True
 export CUDA_VISIBLE_DEVICES=0
 
 # ─── 2. Parameter Configurations ──────────────────────────────────────────────
-YEAR=24
-LABEL=star
+YEAR=2226
+LABEL=data
 MODEL=check/yolo12n.pt
 
 # FIX 1: Use $(pwd) to force an absolute path. 
 # This stops Ultralytics from dropping things inside 'runs/detect/'
 PROJECT_DIR="$(pwd)/output"
-YOLO_ROOT="star24/yolo"
+YOLO_ROOT="data2226/yolo"
 
 # Generate our unique timestamp
 JOB_ID="gcp_$(date +%Y%m%d_%H%M%S)"
@@ -106,10 +106,10 @@ python config/eval_yolo_detections_hung_multi.py \
     --conf 0.01 \
     --nms_iou 0.65 \
     --match_iou 0.1 \
-    --max_det 30 \
+    --max_det 600 \
     --debug_n 10 \
     --device 0 \
     --batch 4 \
-    --spname asterias astropecten leptasterias  # Pass all classes space-separated
+    --spname scallop  # Pass all classes space-separated
 
 echo "=== Pipeline Completed Successfully ==="
