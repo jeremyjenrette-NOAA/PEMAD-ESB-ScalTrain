@@ -136,9 +136,26 @@ python ${BASE_DIR}/config/eval_viame_detections_hung_multi.py \
   --spname asterias astropecten leptasterias  # Pass all 3 classes space-separated
 
 # ─── 5. Storage Optimization Post-Clean ───────────────────────────────────────
-echo -e "\n=== Step 3: Purging Temporary Cache Files ==="
-cd "${JOB_OUT_DIR}/deep_training" || exit 1
-[ -d "_cache" ] && rm -rf "_cache"
-[ -d "_mru" ] && rm -rf "_mru"
+echo -e "\n=== Step 3: Preserving Deployment Package & Purging Heavy Artifacts ==="
+
+# Locate the generated deploy zip file inside the deep_training runs folder
+DEPLOY_ZIP_SRC=$(find "${JOB_OUT_DIR}/deep_training" -name "deploy_*.zip" -type f | head -n 1)
+
+if [ -n "${DEPLOY_ZIP_SRC}" ] && [ -f "${DEPLOY_ZIP_SRC}" ]; then
+    echo "Found deployment package: ${DEPLOY_ZIP_SRC}"
+    # Dereference symlinks (-L) and copy as a standalone physical zip file
+    cp -L "${DEPLOY_ZIP_SRC}" "${JOB_OUT_DIR}/deploy.zip"
+    echo "Successfully saved standalone file to: ${JOB_OUT_DIR}/deploy.zip"
+else
+    echo "WARNING: Could not locate deploy_*.zip to preserve."
+fi
+
+# Purge the 19 GB deep_training directory (checkpoints, monitor logs, and caches)
+echo "Purging heavy training artifacts..."
+rm -rf "${JOB_OUT_DIR}/deep_training"
+
+echo "=== Storage Clean-up Complete ==="
+echo "Remaining contents of ${JOB_OUT_DIR}:"
+ls -lh "${JOB_OUT_DIR}"
 
 echo "=== VIAME End-to-End GCP Job Successfully Dispatched ==="
