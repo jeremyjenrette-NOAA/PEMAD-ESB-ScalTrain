@@ -20,12 +20,12 @@ export CUDA_VISIBLE_DEVICES=0
 
 # ─── 2. Parameter Configurations ──────────────────────────────────────────────
 YEAR=2426
-LABEL=crab
+LABEL=crabdata
 MODEL=check/yolo12n.pt
 
 # FIX 1: Use $(pwd) to force an absolute path. 
 # This stops Ultralytics from dropping things inside 'runs/detect/'
-PROJECT="2426crab_yolo12n_gcp_20260708_205743"
+PROJECT="2426crabdata_yolo12n_gcp_20260831_143915"
 PROJECT_DIR="$(pwd)/output/${PROJECT}"
 YOLO_ROOT="crabdata2426/yolo"
 
@@ -93,7 +93,7 @@ echo "Building evaluation tracking manifests..."
 write_val_image_csv "${YOLO_ROOT}" "$VAL_IMG_CSV"
 
 # Swapped out 'srun' for the evaluation step execution
-python config/eval_yolo_detections_hung.py \
+python config/eval_yolo_detections_hung_multi.py \
     --year ${YEAR} \
     --model_name ${MODEL_TAG} \
     --run_dir ${PROJECT_DIR} \
@@ -110,6 +110,6 @@ python config/eval_yolo_detections_hung.py \
     --debug_n 10 \
     --device 0 \
     --batch 4 \
-    --spname "${LABEL}"
+    --spname jonah_crab rock_crab cancer_sp
 
 echo "=== Pipeline Completed Successfully ==="

@@ -19,14 +19,14 @@ export PYTORCH_ALLOC_CONF=expandable_segments:True
 export CUDA_VISIBLE_DEVICES=0
 
 # ─── 2. Parameter Configurations ──────────────────────────────────────────────
-YEAR=2426
-LABEL=crabdata
+YEAR=24
+LABEL=star
 MODEL=check/yolo12n.pt
 
 # FIX 1: Use $(pwd) to force an absolute path. 
 # This stops Ultralytics from dropping things inside 'runs/detect/'
 PROJECT_DIR="$(pwd)/output"
-YOLO_ROOT="crabdata2426/yolo_broad"
+YOLO_ROOT="star24/yolo_broad"
 
 # Generate our unique timestamp
 JOB_ID="gcp_$(date +%Y%m%d_%H%M%S)"
@@ -116,17 +116,17 @@ echo "=== Training Classifier ==="
 
 python config/train_classifier.py \
     --crop_dir ${LABEL}${YEAR}/crops \
-    --taxonomy_json config/cancer_taxonomy.json \
+    --taxonomy_json config/star_taxonomy.json \
     --backbone convnext_tiny \
     --epochs 30 \
     --num_workers 0 \  # <-- Add this flag
-    --out_weights ${RUN_DIR}/weights/crab_tax.pt
+    --out_weights ${RUN_DIR}/weights/star_tax.pt
 
 python scripts/eval_two_stage_predictions.py \
-    --autotest_csv ${RUN_DIR}/eval/autotest2426_yolo12n.csv \
-    --val_img_dir crab2426/yolo/images/val \
-    --stage2_weights ${RUN_DIR}/weights/crab_tax.pt \
-    --taxonomy_json config/cancer_taxonomy.json \
+    --autotest_csv ${RUN_DIR}/eval/autotest24_yolo12n.csv \
+    --val_img_dir star24/yolo/images/val \
+    --stage2_weights ${RUN_DIR}/weights/star_tax.pt \
+    --taxonomy_json config/star_taxonomy.json \
     --out_csv ${RUN_DIR}/eval/autotest_two_stage_cascade.csv
 
 echo "=== Pipeline Completed Successfully ==="
