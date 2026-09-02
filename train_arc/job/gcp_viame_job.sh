@@ -78,7 +78,7 @@ ${VIAME_INSTALL}/bin/python -m viame.pytorch.netharn.detect_fit \
   --augmenter=complex \
   --schedule=ReduceLROnPlateau-p2-c2 \
   --ignore_first_epochs=2 \
-  --max_epoch=15 \
+  --max_epoch=40 \
   --patience=7 \
   --input_dims=window \
   --window_dims=640,640 \

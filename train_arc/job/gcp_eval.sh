@@ -19,15 +19,15 @@ export PYTORCH_ALLOC_CONF=expandable_segments:True
 export CUDA_VISIBLE_DEVICES=0
 
 # ─── 2. Parameter Configurations ──────────────────────────────────────────────
-YEAR=2426
-LABEL=crab
+YEAR=2226
+LABEL=data
 MODEL=check/yolo12n.pt
 
 # FIX 1: Use $(pwd) to force an absolute path. 
 # This stops Ultralytics from dropping things inside 'runs/detect/'
-PROJECT="2426crab_yolo12n_gcp_20260708_205743"
+PROJECT="2226data_yolo12n_gcp_20260826_142130"
 PROJECT_DIR="$(pwd)/output/${PROJECT}"
-YOLO_ROOT="crabdata2426/yolo"
+YOLO_ROOT="data2226/yolo"
 
 # Generate our unique timestamp
 # JOB_ID="gcp_$(date +%Y%m%d_%H%M%S)"
@@ -93,23 +93,23 @@ echo "Building evaluation tracking manifests..."
 write_val_image_csv "${YOLO_ROOT}" "$VAL_IMG_CSV"
 
 # Swapped out 'srun' for the evaluation step execution
-python config/eval_yolo_detections_hung.py \
+python config/eval_yolo_detections_hung_multi.py \
     --year ${YEAR} \
     --model_name ${MODEL_TAG} \
     --run_dir ${PROJECT_DIR} \
     --weights ${BEST_WEIGHTS} \
     --data_root "${YOLO_ROOT}" \
-    --out_csv ${PROJECT_DIR}/eval/autotest.csv \
-    --gt_out_csv ${PROJECT_DIR}/eval/mantest.csv \
-    --out_fn_csv ${PROJECT_DIR}/eval/fn.csv \
+    --out_csv ${PROJECT_DIR}/eval/autotest${YEAR}_${MODEL_TAG}.csv \
+    --gt_out_csv ${PROJECT_DIR}/eval/mantest${YEAR}_${MODEL_TAG}.csv \
+    --out_fn_csv ${PROJECT_DIR}/eval/fn${YEAR}_${MODEL_TAG}.csv \
     --imgsz 1024 \
     --conf 0.01 \
     --nms_iou 0.65 \
     --match_iou 0.1 \
-    --max_det 30 \
+    --max_det 600 \
     --debug_n 10 \
     --device 0 \
     --batch 4 \
-    --spname "${LABEL}"
+    --spname scallop  # Pass all classes space-separated
 
 echo "=== Pipeline Completed Successfully ==="
