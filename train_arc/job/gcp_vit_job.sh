@@ -1,6 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # GCP Workstation RT-DETR (ViT) Training & Evaluation Pipeline
+# nohup ./job/gcp_vit_job.sh > ./log/vit_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 # ==============================================================================
 set -e
 
@@ -9,7 +10,7 @@ export CUDA_VISIBLE_DEVICES=0
 
 YEAR=2226
 LABEL=data
-MODEL=rtdetr-l.pt   # Large Vision Transformer detector checkpoint
+MODEL=check/rtdetr-l.pt   # Large Vision Transformer detector checkpoint
 
 PROJECT_DIR="$(pwd)/output"
 YOLO_ROOT="data2226/yolo"
@@ -29,7 +30,7 @@ python config/run_vit.py \
     --data_root "${YOLO_ROOT}" \
     --model ${MODEL} \
     --label ${LABEL} \
-    --epochs 1 \
+    --epochs 130 \
     --imgsz 1024 \
     --batch 4 \
     --workers 0 \

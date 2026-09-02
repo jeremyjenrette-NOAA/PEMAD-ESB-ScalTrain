@@ -51,6 +51,7 @@ def main() -> None:
     # Initialize RT-DETR Transformer architecture
     model = RTDETR(args.model)
 
+    # config/run_vit.py
     results = model.train(
         data=data_yaml,
         epochs=args.epochs,
@@ -61,6 +62,7 @@ def main() -> None:
         project=str(project_dir),
         name=run_name,
         exist_ok=args.exist_ok,
+        amp=False,  # <-- ADD THIS: Prevents FP16 loss explosion/NaNs in RT-DETR
     )
 
     print("Transformer Training complete.")
