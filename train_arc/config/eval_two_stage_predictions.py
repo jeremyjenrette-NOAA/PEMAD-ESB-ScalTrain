@@ -17,7 +17,7 @@ try:
 except ImportError:
     pass
 
-from scripts.train_hierarchical_classifier import HierarchicalTaxonomicClassifier
+from train_classifier import HierarchicalTaxonomicClassifier
 
 
 def classify_detector_boxes(
