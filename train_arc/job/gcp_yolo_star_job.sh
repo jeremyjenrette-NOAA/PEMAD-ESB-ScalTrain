@@ -3,7 +3,7 @@
 # GCP Workstation End-to-End YOLO Training & Evaluation Pipeline
 # Targets: single Tesla T4 GPU workflow
 # ==============================================================================
-# nohup ./job/gcp_yolo_job.sh > ./log/yolo_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+# nohup ./job/gcp_yolo_star_job.sh > ./log/yolo_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 # Exit instantly if any nested pipeline step throws an error code
 set -e
 
@@ -96,12 +96,12 @@ write_val_image_csv "${YOLO_ROOT}" "$VAL_IMG_CSV"
 python config/eval_yolo_detections_hung_multi.py \
     --year ${YEAR} \
     --model_name ${MODEL_TAG} \
-    --run_dir ${PROJECT_DIR} \
+    --run_dir ${RUN_DIR} \
     --weights ${BEST_WEIGHTS} \
     --data_root "${YOLO_ROOT}" \
-    --out_csv ${PROJECT_DIR}/eval/autotest.csv \
-    --gt_out_csv ${PROJECT_DIR}/eval/mantest.csv \
-    --out_fn_csv ${PROJECT_DIR}/eval/fn.csv \
+    --out_csv ${RUN_DIR}/eval/autotest.csv \
+    --gt_out_csv ${RUN_DIR}/eval/mantest.csv \
+    --out_fn_csv ${RUN_DIR}/eval/fn.csv \
     --imgsz 1024 \
     --conf 0.01 \
     --nms_iou 0.65 \
@@ -110,7 +110,7 @@ python config/eval_yolo_detections_hung_multi.py \
     --debug_n 10 \
     --device 0 \
     --batch 4 \
-    --spname jonah_crab rock_crab cancer_sp
+    --spname Asterias_forbesi Asterias_vulgaris Astropecten_americanus Henricia Leptasterias Leptasterias_tenera
 
 echo "=== Training Classifier ==="
 
@@ -119,11 +119,11 @@ python config/train_classifier.py \
     --taxonomy_json config/star_taxonomy.json \
     --backbone convnext_tiny \
     --epochs 30 \
-    --num_workers 0 \  # <-- Add this flag
+    --num_workers 0 \
     --out_weights ${RUN_DIR}/weights/star_tax.pt
 
 python scripts/eval_two_stage_predictions.py \
-    --autotest_csv ${RUN_DIR}/eval/autotest24_yolo12n.csv \
+    --autotest_csv ${RUN_DIR}/eval/autotest.csv \
     --val_img_dir star24/yolo/images/val \
     --stage2_weights ${RUN_DIR}/weights/star_tax.pt \
     --taxonomy_json config/star_taxonomy.json \
