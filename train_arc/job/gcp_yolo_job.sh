@@ -96,12 +96,12 @@ write_val_image_csv "${YOLO_ROOT}" "$VAL_IMG_CSV"
 python config/eval_yolo_detections_hung_multi.py \
     --year ${YEAR} \
     --model_name ${MODEL_TAG} \
-    --run_dir ${PROJECT_DIR} \
+    --run_dir ${RUN_DIR} \
     --weights ${BEST_WEIGHTS} \
     --data_root "${YOLO_ROOT}" \
-    --out_csv ${PROJECT_DIR}/eval/autotest.csv \
-    --gt_out_csv ${PROJECT_DIR}/eval/mantest.csv \
-    --out_fn_csv ${PROJECT_DIR}/eval/fn.csv \
+    --out_csv ${RUN_DIR}/eval/autotest.csv \
+    --gt_out_csv ${RUN_DIR}/eval/mantest.csv \
+    --out_fn_csv ${RUN_DIR}/eval/fn.csv \
     --imgsz 1024 \
     --conf 0.01 \
     --nms_iou 0.65 \
@@ -119,11 +119,11 @@ python config/train_classifier.py \
     --taxonomy_json config/cancer_taxonomy.json \
     --backbone convnext_tiny \
     --epochs 30 \
-    --num_workers 0 \  # <-- Add this flag
+    --num_workers 0 \
     --out_weights ${RUN_DIR}/weights/crab_tax.pt
 
 python scripts/eval_two_stage_predictions.py \
-    --autotest_csv ${RUN_DIR}/eval/autotest2426_yolo12n.csv \
+    --autotest_csv ${RUN_DIR}/eval/autotest.csv \
     --val_img_dir crab2426/yolo/images/val \
     --stage2_weights ${RUN_DIR}/weights/crab_tax.pt \
     --taxonomy_json config/cancer_taxonomy.json \
