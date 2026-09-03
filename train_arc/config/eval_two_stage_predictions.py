@@ -1,11 +1,12 @@
 # ==============================================================================
 # File: config/eval_two_stage_predictions.py
-# Purpose: Crop predicted boxes from autotest.csv on-the-fly and run Stage 2
+# Purpose: Crop predicted boxes from autotest.csv on-the-fly and run Stage 2.
 #          Fully dynamic to any taxonomy configuration.
 # ==============================================================================
 
 import argparse
 import json
+import numpy as np
 import pandas as pd
 from pathlib import Path
 from PIL import Image
@@ -13,11 +14,7 @@ from PIL import Image
 import torch
 from torchvision import transforms
 
-<<<<<<< HEAD
-from config.train_classifier import HierarchicalTaxonomicClassifier, parse_taxonomy_config
-=======
-from train_classifier import HierarchicalTaxonomicClassifier
->>>>>>> 69cd6e86ed29a0d1f4f7b0f48919b4fcc3b6150c
+from train_classifier import HierarchicalTaxonomicClassifier, parse_taxonomy_config
 
 
 def classify_detector_boxes(
@@ -39,27 +36,41 @@ def classify_detector_boxes(
     if len(df) > 0:
         sample_img = val_img_dir / df.iloc[0]["Imagename"]
         if not sample_img.exists():
-            raise FileNotFoundError(
-                f"Validation image directory mismatch! Sample frame from CSV not found at: {sample_img}\n"
-                f"Verify --val_img_dir path matches your dataset directory."
-            )
+            raise FileNotFoundError(f"Sample image missing at: {sample_img}. Check --val_img_dir path.")
 
-    # 2. Dynamic Taxonomy Extraction
+    # 2. Extract Species & Genus Maps from Taxonomy Configuration
     with open(taxonomy_json, "r") as f:
         taxonomy_config = json.load(f)
 
-    genus_id_map, species_id_map = parse_taxonomy_config(taxonomy_config)
+    classes = taxonomy_config.get("classes", {})
+    genus_id_map, _ = parse_taxonomy_config(taxonomy_config)
     num_genera = len(genus_id_map)
-    num_species = len(species_id_map)
 
-    # Find indeterminate fallback label name (e.g., class with species_id == -100)
-    sp_fallback = "indeterminate_sp"
-    for cls_info in taxonomy_config.get("classes", {}).values():
+    # Map species_id to fine-grained class name
+    species_id_to_classname = {}
+    for cls_info in classes.values():
+        sp_id = cls_info.get("species_id", -100)
+        if sp_id != -100:
+            species_id_to_classname[sp_id] = cls_info.get("name")
+
+    num_species = len(species_id_to_classname)
+    species_names = [species_id_to_classname[i] for i in sorted(species_id_to_classname.keys())]
+
+    # Map class name to genus for genus accuracy calculation
+    cls_name_to_genus = {info["name"]: info["genus"] for info in classes.values()}
+
+    # Determine fallback name for masked/indeterminate instances
+    indeterminate_fallback = "indeterminate_sp"
+    for cls_info in classes.values():
         if cls_info.get("species_id") == -100:
-            sp_fallback = cls_info.get("name", cls_info.get("species", "indeterminate_sp"))
+            indeterminate_fallback = cls_info.get("name", "indeterminate_sp")
             break
 
-    # 3. Load Trained Model with Dynamic Output Heads
+    # 3. Strip pre-existing broad conf_* columns (keep broad detection score Conf)
+    cols_to_drop = [c for c in df.columns if c.startswith("conf_") and c != "Conf"]
+    df.drop(columns=cols_to_drop, inplace=True)
+
+    # 4. Load Model
     device = torch.device(device if torch.cuda.is_available() else "cpu")
     model = HierarchicalTaxonomicClassifier(
         backbone_name="convnext_tiny",
@@ -78,10 +89,11 @@ def classify_detector_boxes(
 
     stage2_species = []
     stage2_confs = []
+    species_probs_matrix = np.zeros((len(df), num_species))
 
     print(f"Running Stage 2 inference on {len(df)} predicted bounding boxes...")
 
-    # 4. Batch Inference Loop
+    # 5. Batch Inference Loop
     for start_idx in range(0, len(df), batch_size):
         batch_df = df.iloc[start_idx : start_idx + batch_size]
         batch_tensors = []
@@ -95,79 +107,80 @@ def classify_detector_boxes(
             try:
                 image = Image.open(img_path).convert("RGB")
                 w, h = image.size
-
-                # Bounding box extraction
                 tlx, tly, brx, bry = row["TLx"], row["TLy"], row["BRx"], row["BRy"]
-                xmin = max(0, int(tlx))
-                ymin = max(0, int(tly))
-                xmax = min(w, int(brx))
-                ymax = min(h, int(bry))
-
-                crop = image.crop((xmin, ymin, xmax, ymax))
-                if crop.width == 0 or crop.height == 0:
-                    continue
-
-                batch_tensors.append(transform(crop))
-                valid_indices.append(offset)
+                crop = image.crop((max(0, int(tlx)), max(0, int(tly)), min(w, int(brx)), min(h, int(bry))))
+                
+                if crop.width > 0 and crop.height > 0:
+                    batch_tensors.append(transform(crop))
+                    valid_indices.append(offset)
             except Exception:
                 continue
 
         batch_preds = ["unknown"] * len(batch_df)
-        batch_confs = [0.0] * len(batch_df)
+        batch_top_confs = [0.0] * len(batch_df)
 
         if batch_tensors:
             input_tensor = torch.stack(batch_tensors).to(device)
             with torch.no_grad():
                 _, species_logits = model(input_tensor)
-                probs = torch.softmax(species_logits, dim=1)
-                conf_values, pred_ids = probs.max(dim=1)
+                probs = torch.softmax(species_logits, dim=1).cpu().numpy()
+                top_confs = probs.max(axis=1)
+                pred_ids = probs.argmax(axis=1)
 
             for i, valid_offset in enumerate(valid_indices):
-                pid = pred_ids[i].item()
-                batch_preds[valid_offset] = species_id_map.get(pid, sp_fallback)
-                batch_confs[valid_offset] = conf_values[i].item()
+                pid = pred_ids[i]
+                batch_preds[valid_offset] = species_id_to_classname.get(pid, indeterminate_fallback)
+                batch_top_confs[valid_offset] = top_confs[i]
+                global_idx = start_idx + valid_offset
+                species_probs_matrix[global_idx] = probs[i]
 
         stage2_species.extend(batch_preds)
-        stage2_confs.extend(batch_confs)
+        stage2_confs.extend(batch_top_confs)
 
-    # 5. Append Results & Export
+    # 6. Append Stage 2 Results
     df["stage2_species"] = stage2_species
     df["stage2_conf"] = stage2_confs
+
+    for sp_id, sp_name in enumerate(species_names):
+        df[f"conf_{sp_name}"] = species_probs_matrix[:, sp_id]
 
     out_path = Path(out_csv)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_path, index=False)
 
-    print(f"Inference complete! Results saved to: {out_csv}")
+    # 7. Evaluate Performance on True Positives
+    tp_df = df[df["truedetect"] == True].copy()
+    tp_df["gt_genus"] = tp_df["gt_label"].map(cls_name_to_genus)
+    tp_df["pred_genus"] = tp_df["stage2_species"].map(cls_name_to_genus)
 
-    # 6. Combined System Metrics
-    tp_mask = df["truedetect"] == True
-    tp_df = df[tp_mask]
+    # Genus Accuracy
+    eval_genus_tp = tp_df[tp_df["gt_genus"].notna()]
+    correct_g = (eval_genus_tp["pred_genus"] == eval_genus_tp["gt_genus"]).sum()
+    total_g = len(eval_genus_tp)
+    acc_genus = (correct_g / total_g * 100) if total_g > 0 else 0.0
 
-    # Evaluate accuracy against fine-grained species ground truths
-    valid_species_names = list(species_id_map.values())
-    evaluable_tp = tp_df[tp_df["gt_label"].isin(valid_species_names)]
-    
-    correct = (evaluable_tp["stage2_species"] == evaluable_tp["gt_label"]).sum()
-    total = len(evaluable_tp)
-    accuracy = (correct / total * 100) if total > 0 else 0.0
+    # Fine Species Accuracy
+    eval_sp_tp = tp_df[tp_df["gt_label"].isin(species_names)]
+    correct_sp = (eval_sp_tp["stage2_species"] == eval_sp_tp["gt_label"]).sum()
+    total_sp = len(eval_sp_tp)
+    acc_species = (correct_sp / total_sp * 100) if total_sp > 0 else 0.0
 
     print("\n================ SYSTEM EVALUATION SUMMARY ================")
     print(f"Total Broad Detections Evaluated : {len(df)}")
     print(f"Stage 1 True Positives (TP)     : {len(tp_df)}")
     print(f"Stage 1 False Positives (FP)    : {(df['truedetect'] == False).sum()}")
-    print(f"Evaluable TPs with GT Species   : {total}")
-    print(f"Stage 2 Accuracy on Detector TPs: {accuracy:.2f}% ({correct}/{total})")
+    print(f"Stage 2 Genus Accuracy on TPs   : {acc_genus:.2f}% ({correct_g}/{total_g})")
+    print(f"Stage 2 Species Accuracy on TPs : {acc_species:.2f}% ({correct_sp}/{total_sp})")
     print("===========================================================\n")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Two-Stage Cascade Pipeline")
-    parser.add_argument("--autotest_csv", required=True, help="Path to autotest.csv from broad detector run")
-    parser.add_argument("--val_img_dir", required=True, help="Path to validation images")
-    parser.add_argument("--stage2_weights", required=True, help="Path to trained Stage 2 weights")
-    parser.add_argument("--taxonomy_json", required=True, help="Path to taxonomy config JSON")
-    parser.add_argument("--out_csv", required=True, help="Path for merged output CSV")
+    parser.add_argument("--autotest_csv", required=True)
+    parser.add_argument("--val_img_dir", required=True)
+    parser.add_argument("--stage2_weights", required=True)
+    parser.add_argument("--taxonomy_json", required=True)
+    parser.add_argument("--out_csv", required=True)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--device", default="cuda:0")
     args = parser.parse_args()
