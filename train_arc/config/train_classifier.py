@@ -1,6 +1,7 @@
 # ==============================================================================
-# File: scripts/train_classifier.py
+# File: config/train_classifier.py
 # Purpose: Train Stage 2 Classifier on ground-truth crops (crops/train, crops/val)
+#          Fully dynamic to any taxonomic JSON configuration.
 # ==============================================================================
 
 import argparse
@@ -14,10 +15,39 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 import timm
-import torch
 
 # Switch PyTorch IPC sharing strategy from shared memory (/dev/shm) to disk (/tmp)
 torch.multiprocessing.set_sharing_strategy('file_system')
+
+
+def parse_taxonomy_config(taxonomy_config: dict):
+    """
+    Dynamically extracts genus/species maps, head sizes, and fallback names
+    from any taxonomy JSON without hardcoded assumptions.
+    """
+    classes = taxonomy_config.get("classes", {})
+
+    # Extract Genus Map & Count
+    if "genus_id_to_name" in taxonomy_config:
+        genus_id_map = {int(k): v for k, v in taxonomy_config["genus_id_to_name"].items()}
+    else:
+        genus_id_map = {}
+        for cls_info in classes.values():
+            if "genus_id" in cls_info:
+                genus_id_map[cls_info["genus_id"]] = cls_info.get("genus", f"genus_{cls_info['genus_id']}")
+
+    # Extract Species Map & Count
+    if "species_id_to_name" in taxonomy_config:
+        species_id_map = {int(k): v for k, v in taxonomy_config["species_id_to_name"].items()}
+    else:
+        species_id_map = {}
+        for cls_info in classes.values():
+            sp_id = cls_info.get("species_id", -100)
+            if sp_id != -100:
+                species_id_map[sp_id] = cls_info.get("species", cls_info.get("name", f"species_{sp_id}"))
+
+    return genus_id_map, species_id_map
+
 
 class TaxonomicCropDataset(Dataset):
     """
@@ -30,8 +60,7 @@ class TaxonomicCropDataset(Dataset):
         self.transform = transform
         self.samples = []
 
-        # Load class targets from taxonomy JSON configuration
-        classes = taxonomy_config["classes"]
+        classes = taxonomy_config.get("classes", {})
         for class_id, info in classes.items():
             folder_name = info["name"]
             folder_path = self.root_dir / folder_name
@@ -65,10 +94,10 @@ class TaxonomicCropDataset(Dataset):
 class HierarchicalTaxonomicClassifier(nn.Module):
     """
     Two-head PyTorch classifier extending a timm vision backbone.
-    Head 1: Genus branch
-    Head 2: Species branch
+    Head 1: Genus branch (num_genera nodes)
+    Head 2: Species branch (num_species nodes)
     """
-    def __init__(self, backbone_name: str = "convnext_tiny", num_genera: int = 1, num_species: int = 2, pretrained: bool = True):
+    def __init__(self, backbone_name: str, num_genera: int, num_species: int, pretrained: bool = True):
         super().__init__()
         self.backbone = timm.create_model(backbone_name, pretrained=pretrained, num_classes=0)
         in_features = self.backbone.num_features
@@ -82,26 +111,25 @@ class HierarchicalTaxonomicClassifier(nn.Module):
         species_logits = self.species_head(feats)
         return genus_logits, species_logits
 
+
 class MaskedHierarchicalLoss(nn.Module):
     def __init__(self, ignore_species_idx: int = -100):
         super().__init__()
         self.ignore_species_idx = ignore_species_idx
         self.genus_criterion = nn.CrossEntropyLoss()
-        # Set reduction='sum' so we can manually divide by valid target counts
         self.species_criterion = nn.CrossEntropyLoss(ignore_index=ignore_species_idx, reduction='sum')
 
     def forward(self, genus_logits, species_logits, genus_targets, species_targets):
-        # 1. Genus loss (always computed)
+        # 1. Genus loss
         loss_genus = self.genus_criterion(genus_logits, genus_targets)
 
-        # 2. Species loss (guarded against zero valid targets)
+        # 2. Species loss (guarded against zero valid targets to prevent NaN)
         valid_mask = (species_targets != self.ignore_species_idx)
         n_valid = valid_mask.sum().item()
 
         if n_valid > 0:
             loss_species = self.species_criterion(species_logits, species_targets) / n_valid
         else:
-            # If batch contains only 'cancer_sp' (-100), species loss is zero
             loss_species = torch.tensor(0.0, device=genus_logits.device)
 
         return loss_genus + loss_species
@@ -175,20 +203,32 @@ def evaluate(model, loader, criterion, device):
 
 def main():
     parser = argparse.ArgumentParser(description="Train Stage 2 Hierarchical Classifier")
-    parser.add_argument("--crop_dir", default="crops", help="Root folder containing train/ and val/ crops")
-    parser.add_argument("--taxonomy_json", default="config/taxonomy_config.json", help="Path to taxonomy config")
+    parser.add_argument("--crop_dir", required=True, help="Root folder containing train/ and val/ crops")
+    parser.add_argument("--taxonomy_json", required=True, help="Path to taxonomy config JSON")
     parser.add_argument("--backbone", default="convnext_tiny", help="Timm backbone architecture")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--num_workers", type=int, default=0)
-    parser.add_argument("--out_weights", default="output/stage2_classifier.pt")
+    parser.add_argument("--out_weights", required=True, help="Output destination for best weights")
     args = parser.parse_args()
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     with open(args.taxonomy_json, "r") as f:
         taxonomy_config = json.load(f)
+
+    # Dynamically extract rank mapping dimensions
+    genus_id_map, species_id_map = parse_taxonomy_config(taxonomy_config)
+    num_genera = len(genus_id_map)
+    num_species = len(species_id_map)
+
+    dataset_name = taxonomy_config.get("dataset_name", "Taxa")
+    print(f"\n================ TAXONOMY INITIALIZATION ================")
+    print(f"Dataset Name    : {dataset_name}")
+    print(f"Genera Head     : {num_genera} classes ({list(genus_id_map.values())})")
+    print(f"Species Head    : {num_species} classes ({list(species_id_map.values())})")
+    print(f"=========================================================\n")
 
     # Prepare datasets
     train_dataset = TaxonomicCropDataset(Path(args.crop_dir) / "train", taxonomy_config, get_transforms(224, is_train=True))
@@ -198,7 +238,7 @@ def main():
         train_dataset, 
         batch_size=args.batch_size, 
         shuffle=True, 
-        num_workers=args.num_workers,  # <-- Set to 0 to run data loading on the main process
+        num_workers=args.num_workers,
         pin_memory=True
     )
 
@@ -206,16 +246,15 @@ def main():
         val_dataset, 
         batch_size=args.batch_size, 
         shuffle=False, 
-        num_workers=args.num_workers,  # <-- Set to 0
+        num_workers=args.num_workers,
         pin_memory=True
     )
 
-    # Initialize model
-    species_id_map = taxonomy_config.get("species_id_to_name", {"0": "borealis", "1": "irroratus"})
+    # Initialize model dynamically
     model = HierarchicalTaxonomicClassifier(
         backbone_name=args.backbone,
-        num_genera=1,
-        num_species=len(species_id_map)
+        num_genera=num_genera,
+        num_species=num_species
     ).to(device)
 
     criterion = MaskedHierarchicalLoss(ignore_species_idx=-100)
