@@ -3,7 +3,7 @@
 # GCP Workstation End-to-End YOLO Training & Evaluation Pipeline
 # Targets: single Tesla T4 GPU workflow
 # ==============================================================================
-# nohup ./job/gcp_yolo_job.sh > ./log/yolo_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+# nohup ./job/gcp_yolo_star_job.sh > ./log/yolo_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 # Exit instantly if any nested pipeline step throws an error code
 set -e
 
