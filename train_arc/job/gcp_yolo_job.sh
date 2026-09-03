@@ -26,7 +26,7 @@ MODEL=check/yolo12n.pt
 # FIX 1: Use $(pwd) to force an absolute path. 
 # This stops Ultralytics from dropping things inside 'runs/detect/'
 PROJECT_DIR="$(pwd)/output"
-YOLO_ROOT="crabdata2426/yolo_broad"
+YOLO_ROOT="${LABEL}${YEAR}/yolo_broad"
 
 # Generate our unique timestamp
 JOB_ID="gcp_$(date +%Y%m%d_%H%M%S)"
@@ -91,39 +91,42 @@ VAL_IMG_CSV="${RUN_DIR}/eval/val_images${YEAR}_${MODEL_TAG}.csv"
 echo "Building evaluation tracking manifests..."
 write_val_image_csv "${YOLO_ROOT}" "$VAL_IMG_CSV"
 
+# Swapped out 'srun' for the evaluation step execution
 # Update Python evaluation script execution parameters at the bottom:
-# ─── 1. Stage 1 Broad Evaluation ──────────────────────────────────────────────
 python config/eval_yolo_detections_hung_multi.py \
     --year ${YEAR} \
     --model_name ${MODEL_TAG} \
     --run_dir ${RUN_DIR} \
     --weights ${BEST_WEIGHTS} \
-    --data_root "${LABEL}${YEAR}/yolo_broad" \
-    --gt_data_root "${LABEL}${YEAR}/yolo" \
-    --taxonomy_json "config/${LABEL}_taxonomy.json" \
-    --spname "${LABEL}_broad" \
+    --data_root "${YOLO_ROOT}" \
     --out_csv ${RUN_DIR}/eval/autotest.csv \
+    --gt_out_csv ${RUN_DIR}/eval/mantest.csv \
+    --out_fn_csv ${RUN_DIR}/eval/fn.csv \
     --imgsz 1024 \
     --conf 0.01 \
     --nms_iou 0.65 \
     --match_iou 0.1 \
-    --device 0
+    --max_det 30 \
+    --debug_n 10 \
+    --device 0 \
+    --batch 4 \
+    --spname Asterias_forbesi Asterias_vulgaris Astropecten_americanus Henricia Leptasterias Leptasterias_tenera
 
-# ─── 2. Stage 2 Classifier Training ───────────────────────────────────────────
+echo "=== Training Classifier ==="
+
 python config/train_classifier.py \
-    --crop_dir "${LABEL}${YEAR}/crops" \
-    --taxonomy_json "config/${LABEL}_taxonomy.json" \
-    --backbone "convnext_tiny" \
+    --crop_dir ${LABEL}${YEAR}/crops \
+    --taxonomy_json config/${LABEL}_taxonomy.json \
+    --backbone convnext_tiny \
     --epochs 1 \
     --num_workers 0 \
-    --out_weights ${RUN_DIR}/weights/stage2_classifier.pt
+    --out_weights ${RUN_DIR}/weight/${LABEL}_tax.pt
 
-# ─── 3. Stage 2 Two-Stage Inference & Combined Evaluation ────────────────────
 python config/eval_two_stage_predictions.py \
     --autotest_csv ${RUN_DIR}/eval/autotest.csv \
-    --val_img_dir "${LABEL}${YEAR}/yolo/images/val" \
-    --stage2_weights ${RUN_DIR}/weights/stage2_classifier.pt \
-    --taxonomy_json "config/${LABEL}_taxonomy.json" \
+    --val_img_dir ${LABEL}${YEAR}/yolo/images/val \
+    --stage2_weights ${RUN_DIR}/weights/${LABEL}_tax.pt \
+    --taxonomy_json config/${LABEL}_taxonomy.json \
     --out_csv ${RUN_DIR}/eval/autotest_two_stage_cascade.csv
 
 echo "=== Pipeline Completed Successfully ==="

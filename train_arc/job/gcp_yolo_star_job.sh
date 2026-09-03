@@ -3,7 +3,7 @@
 # GCP Workstation End-to-End YOLO Training & Evaluation Pipeline
 # Targets: single Tesla T4 GPU workflow
 # ==============================================================================
-# nohup ./job/gcp_yolo_star_job.sh > ./log/yolo_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+# nohup ./job/gcp_yolo_job.sh > ./log/yolo_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 # Exit instantly if any nested pipeline step throws an error code
 set -e
 
@@ -26,7 +26,7 @@ MODEL=check/yolo12n.pt
 # FIX 1: Use $(pwd) to force an absolute path. 
 # This stops Ultralytics from dropping things inside 'runs/detect/'
 PROJECT_DIR="$(pwd)/output"
-YOLO_ROOT="star24/yolo_broad"
+YOLO_ROOT="${LABEL}${YEAR}/yolo_broad"
 
 # Generate our unique timestamp
 JOB_ID="gcp_$(date +%Y%m%d_%H%M%S)"
@@ -68,7 +68,7 @@ python config/run_yolo.py \
     --data_root "${YOLO_ROOT}" \
     --model ${MODEL} \
     --label ${LABEL} \
-    --epochs 120 \
+    --epochs 7 \
     --imgsz 1024 \
     --batch 16 \
     --workers 0 \
@@ -116,18 +116,17 @@ echo "=== Training Classifier ==="
 
 python config/train_classifier.py \
     --crop_dir ${LABEL}${YEAR}/crops \
-    --taxonomy_json config/star_taxonomy.json \
+    --taxonomy_json config/${LABEL}_taxonomy.json \
     --backbone convnext_tiny \
-    --epochs 30 \
+    --epochs 1 \
     --num_workers 0 \
-    --out_weights ${RUN_DIR}/weights/star_tax.pt
+    --out_weights ${RUN_DIR}/weight/${LABEL}_tax.pt
 
-python scripts/eval_two_stage_predictions.py \
+python config/eval_two_stage_predictions.py \
     --autotest_csv ${RUN_DIR}/eval/autotest.csv \
-    --val_img_dir star24/yolo/images/val \
-    --stage2_weights ${RUN_DIR}/weights/star_tax.pt \
-    --taxonomy_json config/star_taxonomy.json \
+    --val_img_dir ${LABEL}${YEAR}/yolo/images/val \
+    --stage2_weights ${RUN_DIR}/weights/${LABEL}_tax.pt \
+    --taxonomy_json config/${LABEL}_taxonomy.json \
     --out_csv ${RUN_DIR}/eval/autotest_two_stage_cascade.csv
-
 
 echo "=== Pipeline Completed Successfully ==="
