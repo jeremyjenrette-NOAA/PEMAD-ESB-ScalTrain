@@ -1,0 +1,31 @@
+{
+  "dataset_name": "Cancer_Crabs",
+  "ranks": ["genus", "species"],
+  "classes": {
+    "0": {
+      "name": "jonah_crab",
+      "genus": "Cancer",
+      "species": "jonah_crab",
+      "genus_id": 0,
+      "species_id": 0
+    },
+    "1": {
+      "name": "rock_crab",
+      "genus": "Cancer",
+      "species": "rock_crab",
+      "genus_id": 0,
+      "species_id": 1
+    },
+    "2": {
+      "name": "cancer_sp",
+      "genus": "Cancer",
+      "species": "cancer_sp",
+      "genus_id": 0,
+      "species_id": -100
+    }
+  },
+  "species_id_to_name": {
+    "0": "jonah_crab",
+    "1": "rock_crab"
+  }
+}

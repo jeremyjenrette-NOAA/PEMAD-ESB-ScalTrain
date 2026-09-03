@@ -122,9 +122,9 @@ python config/train_classifier.py \
     --num_workers 0 \
     --out_weights ${RUN_DIR}/weights/crab_tax.pt
 
-python scripts/eval_two_stage_predictions.py \
+python config/eval_two_stage_predictions.py \
     --autotest_csv ${RUN_DIR}/eval/autotest.csv \
-    --val_img_dir crab2426/yolo/images/val \
+    --val_img_dir crabdata2426/yolo/images/val \
     --stage2_weights ${RUN_DIR}/weights/crab_tax.pt \
     --taxonomy_json config/cancer_taxonomy.json \
     --out_csv ${RUN_DIR}/eval/autotest_two_stage_cascade.csv

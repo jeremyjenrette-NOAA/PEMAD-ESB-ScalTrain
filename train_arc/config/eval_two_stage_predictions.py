@@ -13,7 +13,11 @@ from PIL import Image
 import torch
 from torchvision import transforms
 
+<<<<<<< HEAD
 from config.train_classifier import HierarchicalTaxonomicClassifier, parse_taxonomy_config
+=======
+from train_classifier import HierarchicalTaxonomicClassifier
+>>>>>>> 69cd6e86ed29a0d1f4f7b0f48919b4fcc3b6150c
 
 
 def classify_detector_boxes(
