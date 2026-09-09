@@ -16,31 +16,14 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 import timm
 
+# parse_taxonomy_config now lives in taxonomy_utils.py so every script (this
+# one, eval_two_stage_predictions.py, eval_yolo_detections_hung_multi.py)
+# shares one implementation instead of each keeping its own copy that can
+# drift out of sync. Re-imported here under the same name so existing
+# `from train_classifier import parse_taxonomy_config` calls keep working.
+from taxonomy_utils import parse_taxonomy_config
+
 torch.multiprocessing.set_sharing_strategy('file_system')
-
-
-def parse_taxonomy_config(taxonomy_config: dict):
-    """Dynamically parses species and genus mappings from taxonomy configuration."""
-    classes = taxonomy_config.get("classes", {})
-
-    if "genus_id_to_name" in taxonomy_config:
-        genus_id_map = {int(k): v for k, v in taxonomy_config["genus_id_to_name"].items()}
-    else:
-        genus_id_map = {}
-        for cls_info in classes.values():
-            if "genus_id" in cls_info:
-                genus_id_map[cls_info["genus_id"]] = cls_info.get("genus", f"genus_{cls_info['genus_id']}")
-
-    if "species_id_to_name" in taxonomy_config:
-        species_id_map = {int(k): v for k, v in taxonomy_config["species_id_to_name"].items()}
-    else:
-        species_id_map = {}
-        for cls_info in classes.values():
-            sp_id = cls_info.get("species_id", -100)
-            if sp_id != -100:
-                species_id_map[sp_id] = cls_info.get("species", cls_info.get("name", f"species_{sp_id}"))
-
-    return genus_id_map, species_id_map
 
 
 class TaxonomicCropDataset(Dataset):

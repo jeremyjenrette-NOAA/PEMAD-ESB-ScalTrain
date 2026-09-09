@@ -10,6 +10,7 @@ and updates manifest CSVs with dynamic per-class counts.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -19,6 +20,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from PIL import Image
+
+from taxonomy_utils import load_taxonomy, validate_taxonomy_against_yolo
 
 # ==========================================
 # Coordinate Helpers
@@ -160,7 +163,20 @@ def parse_args():
         "--classes",
         nargs="+",
         default=None,
-        help="Optional explicit list of target class names to include (case-insensitive)",
+        help="Optional explicit list of target class names to include (case-insensitive). "
+             "Ignored if --taxonomy_json is given.",
+    )
+    parser.add_argument(
+        "--taxonomy_json",
+        type=Path,
+        default=None,
+        help="Path to a taxonomy JSON (e.g. config/crabdata_taxonomy.json). When given, this "
+             "becomes the SOLE authority for class-id <-> name assignment: class ids are read "
+             "from the taxonomy's 'classes' dict instead of being invented by sorting whatever "
+             "label strings appear in the groundtruth CSV. This is what keeps this script, "
+             "extract_crops.py, and eval_yolo_detections_hung_multi.py from ever disagreeing "
+             "about which integer means which species again. Strongly recommended for any "
+             "multi-class taxon.",
     )
 
     args = parser.parse_args()
@@ -233,21 +249,62 @@ def main():
     # 2. Extract & Map Classes
     gt_df["class_slug"] = gt_df[class_col].apply(sanitize_class_name)
 
-    if args.classes:
-        filter_classes = set(sanitize_class_name(c) for c in args.classes)
-        gt_df = gt_df[gt_df["class_slug"].isin(filter_classes)].copy()
+    taxonomy = None
+    if args.taxonomy_json:
+        # --- Taxonomy-driven mode: the JSON is the ONLY authority on class ids. ---
+        taxonomy = load_taxonomy(str(args.taxonomy_json))
+        # slug (taxonomy's own "name" field, already sanitized-style) -> int id
+        class_to_id = {info["name"]: int(cid) for cid, info in taxonomy["classes"].items()}
+        known_slugs = set(class_to_id.keys())
 
-    unique_slugs = sorted(gt_df["class_slug"].unique().tolist())
-    if not unique_slugs:
-        raise ValueError("No valid class labels found in groundtruth annotations!")
+        present_slugs = set(gt_df["class_slug"].unique().tolist())
+        unknown_slugs = present_slugs - known_slugs
+        if unknown_slugs:
+            print(f"WARNING: groundtruth CSV contains {len(unknown_slugs)} label(s) not present "
+                  f"in {args.taxonomy_json} and will be DROPPED (not silently assigned a new id): "
+                  f"{sorted(unknown_slugs)}")
 
-    class_to_id = {slug: idx for idx, slug in enumerate(unique_slugs)}
-    class_to_col = {slug: f"n_{slug}" for slug in unique_slugs}
+        gt_df = gt_df[gt_df["class_slug"].isin(known_slugs)].copy()
+        if gt_df.empty:
+            raise ValueError(
+                f"None of the groundtruth CSV's label values matched a class name in "
+                f"{args.taxonomy_json}. Groundtruth values seen: {sorted(present_slugs)}. "
+                f"Taxonomy class names expected: {sorted(known_slugs)}. "
+                f"Check that the CSV's '{class_col}' column actually contains species-level "
+                f"text, not just genus-level text."
+            )
 
-    print(f"Discovered {len(unique_slugs)} distinct class(es):")
-    for slug, idx in class_to_id.items():
-        print(f"  [{idx}] -> {slug} (Column: {class_to_col[slug]})")
-    print()
+        unique_slugs = sorted(known_slugs, key=lambda s: class_to_id[s])
+        class_to_col = {slug: f"n_{slug}" for slug in unique_slugs}
+
+        print(f"Using {len(unique_slugs)} class(es) from taxonomy {args.taxonomy_json} "
+              f"(ids are fixed by the taxonomy, not discovered from data):")
+        for slug in unique_slugs:
+            print(f"  [{class_to_id[slug]}] -> {slug} (Column: {class_to_col[slug]})")
+        print()
+    else:
+        # --- Legacy mode: no taxonomy given, ids are invented by alphabetical discovery. ---
+        print("WARNING: no --taxonomy_json given. Class ids will be assigned by alphabetically "
+              "sorting whatever label strings are found in this groundtruth CSV. If any other "
+              "script (crop extraction, evaluation, classifier training) expects a taxonomy "
+              "JSON's class ids to match these, THEY WILL NOT unless you pass the same "
+              "--taxonomy_json here. This mode exists only for taxa with no taxonomy JSON yet.")
+
+        if args.classes:
+            filter_classes = set(sanitize_class_name(c) for c in args.classes)
+            gt_df = gt_df[gt_df["class_slug"].isin(filter_classes)].copy()
+
+        unique_slugs = sorted(gt_df["class_slug"].unique().tolist())
+        if not unique_slugs:
+            raise ValueError("No valid class labels found in groundtruth annotations!")
+
+        class_to_id = {slug: idx for idx, slug in enumerate(unique_slugs)}
+        class_to_col = {slug: f"n_{slug}" for slug in unique_slugs}
+
+        print(f"Discovered {len(unique_slugs)} distinct class(es):")
+        for slug, idx in class_to_id.items():
+            print(f"  [{idx}] -> {slug} (Column: {class_to_col[slug]})")
+        print()
 
     # 3. Process Groundtruth Coordinates
     gt_map = {}
@@ -329,12 +386,21 @@ def main():
         "",
         "names:",
     ]
-    for slug, class_idx in class_to_id.items():
+    # Always write names sorted by id, regardless of which mode built class_to_id,
+    # so data.yaml reads as an unambiguous id -> name table.
+    for slug, class_idx in sorted(class_to_id.items(), key=lambda kv: kv[1]):
         yaml_lines.append(f"  {class_idx}: {slug}")
 
     yaml_path = args.yolo_dir / "data.yaml"
     yaml_path.write_text("\n".join(yaml_lines) + "\n")
     print(f"Generated training configuration at: {yaml_path}")
+
+    # 5b. Self-check: if a taxonomy was used, confirm the data.yaml we just wrote
+    # actually agrees with it. This should always pass given the logic above, but
+    # it's a cheap final guardrail against future edits breaking that invariant.
+    if taxonomy is not None:
+        validate_taxonomy_against_yolo(taxonomy, str(yaml_path), taxonomy_json_path=str(args.taxonomy_json))
+        print(f"Self-check passed: {yaml_path} matches {args.taxonomy_json}")
 
     # 6. Export Updated Manifest
     final_df = pd.DataFrame(deployed_records)

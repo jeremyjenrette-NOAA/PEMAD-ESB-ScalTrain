@@ -1,21 +1,42 @@
+# ==============================================================================
+# File: config/extract_crops.py
+# Purpose: Extract ground-truth crops from the ORIGINAL multi-class YOLO
+#          dataset for Stage 2 classifier training. Fully dynamic to any
+#          taxonomy configuration — pass --taxonomy_json, --yolo_root,
+#          --csv_split_path, --output_dir for whichever taxon you're running.
+#
+#          Validates the taxonomy JSON against yolo_root/data.yaml before
+#          touching any images: if the two disagree about which class id
+#          means which species, this exits with a clear error instead of
+#          silently saving crops into the wrong species folders.
+# ==============================================================================
+
+import argparse
 import cv2
 import json
 import pandas as pd
 from pathlib import Path
+
+from taxonomy_utils import load_taxonomy, validate_taxonomy_against_yolo
 
 
 def extract_crops_with_full_lineage(
     csv_split_path: str,
     yolo_root: str,
     output_dir: str,
-    taxonomy_json: str
+    taxonomy_json: str,
+    skip_validation: bool = False,
 ):
     yolo_root = Path(yolo_root)
     output_dir = Path(output_dir)
     meta_df = pd.read_csv(csv_split_path).set_index("imagename")
 
-    with open(taxonomy_json, "r") as f:
-        taxonomy = json.load(f)
+    taxonomy = load_taxonomy(taxonomy_json)
+
+    data_yaml = yolo_root / "data.yaml"
+    if not skip_validation:
+        validate_taxonomy_against_yolo(taxonomy, str(data_yaml), taxonomy_json_path=taxonomy_json)
+        print(f"Taxonomy validated OK against {data_yaml}")
 
     manifest = []
 
@@ -79,15 +100,30 @@ def extract_crops_with_full_lineage(
                     "bottom_depth": csv_row["bottom_depth"] if csv_row is not None else None
                 })
 
+    output_dir.mkdir(parents=True, exist_ok=True)
     manifest_df = pd.DataFrame(manifest)
     manifest_df.to_csv(output_dir / "crop_manifest.csv", index=False)
     print(f"Extraction complete. {len(manifest_df)} crops saved with full metadata tracking.")
 
 
-if __name__ == "__main__":
+def main():
+    parser = argparse.ArgumentParser(description="Extract Stage 2 training crops from a multi-class YOLO dataset.")
+    parser.add_argument("--csv_split_path", required=True, help="e.g. crabdata2426/annotations/dataset_split_crab_multiclass.csv")
+    parser.add_argument("--yolo_root", required=True, help="ORIGINAL multi-class yolo root, e.g. crabdata2426/yolo (NOT yolo_broad)")
+    parser.add_argument("--output_dir", required=True, help="e.g. crabdata2426/crops")
+    parser.add_argument("--taxonomy_json", required=True, help="e.g. config/crabdata_taxonomy.json")
+    parser.add_argument("--skip_validation", action="store_true",
+                         help="Skip the taxonomy/data.yaml cross-check. Not recommended.")
+    args = parser.parse_args()
+
     extract_crops_with_full_lineage(
-        csv_split_path="star24/annotations/dataset_split_star.csv",
-        yolo_root="star24/yolo",
-        output_dir="star24/crops",
-        taxonomy_json="config/asteroidea_taxonomy.json"
+        csv_split_path=args.csv_split_path,
+        yolo_root=args.yolo_root,
+        output_dir=args.output_dir,
+        taxonomy_json=args.taxonomy_json,
+        skip_validation=args.skip_validation,
     )
+
+
+if __name__ == "__main__":
+    main()
