@@ -2,6 +2,17 @@
 # File: config/eval_two_stage_predictions.py
 # Purpose: Crop predicted boxes from autotest.csv on-the-fly and run Stage 2.
 #          Fully dynamic to any taxonomy configuration.
+#
+#          Genus-conditioned decoding: the final species decision is picked
+#          from the genus head's top genus, restricted to the species-head
+#          candidates that actually belong to that genus, so the two heads
+#          can never disagree in the reported output. Genus confidence is
+#          computed from genus_logits (previously discarded entirely) and
+#          written to the output CSV explicitly, along with which
+#          predictions are genus-only ("is_resolved_species": false in the
+#          taxonomy) so genus-level-only classes (e.g. Henricia,
+#          Sclerasterias) are surfaced instead of silently forced into one
+#          of the fully-resolved species.
 # ==============================================================================
 
 import argparse
@@ -14,7 +25,8 @@ from PIL import Image
 import torch
 from torchvision import transforms
 
-from train_classifier import HierarchicalTaxonomicClassifier, parse_taxonomy_config
+from train_classifier import HierarchicalTaxonomicClassifier
+from taxonomy_utils import parse_taxonomy_config
 
 
 def classify_detector_boxes(
@@ -32,7 +44,7 @@ def classify_detector_boxes(
     # 1. Path Integrity Verification
     if not val_img_dir.exists():
         raise FileNotFoundError(f"Validation image directory not found at: {val_img_dir.resolve()}")
-    
+
     if len(df) > 0:
         sample_img = val_img_dir / df.iloc[0]["Imagename"]
         if not sample_img.exists():
@@ -46,25 +58,39 @@ def classify_detector_boxes(
     genus_id_map, _ = parse_taxonomy_config(taxonomy_config)
     num_genera = len(genus_id_map)
 
-    # Map species_id to fine-grained class name
+    # Map species_id to fine-grained class name (now includes genus-only
+    # placeholder classes, since they carry a real species_id in the
+    # taxonomy instead of the old -100 exclusion sentinel).
     species_id_to_classname = {}
+    species_id_is_resolved = {}
+    genus_id_to_species_ids = {gid: [] for gid in genus_id_map}
+
     for cls_info in classes.values():
         sp_id = cls_info.get("species_id", -100)
-        if sp_id != -100:
-            species_id_to_classname[sp_id] = cls_info.get("name")
+        if sp_id == -100:
+            # Reserved for boxes with NO taxonomic info at all (not even
+            # genus). None of the currently defined classes should hit this;
+            # if one does, it has no species-head slot and is excluded here
+            # exactly as before.
+            continue
+        species_id_to_classname[sp_id] = cls_info.get("name")
+        species_id_is_resolved[sp_id] = cls_info.get("is_resolved_species", True)
+        gid = cls_info.get("genus_id")
+        if gid is not None:
+            genus_id_to_species_ids.setdefault(gid, []).append(sp_id)
 
     num_species = len(species_id_to_classname)
     species_names = [species_id_to_classname[i] for i in sorted(species_id_to_classname.keys())]
+    genus_names = [genus_id_map[i] for i in sorted(genus_id_map.keys())]
 
-    # Map class name to genus for genus accuracy calculation
+    genera_with_no_species_slot = [genus_id_map[g] for g, sids in genus_id_to_species_ids.items() if not sids]
+    if genera_with_no_species_slot:
+        print(f"WARNING: these genera have zero species-head slots and can never be the final "
+              f"prediction: {genera_with_no_species_slot}. Give each a species_id (with "
+              f"is_resolved_species=false if genus-only) in {taxonomy_json}.")
+
+    # Map class name to genus for genus accuracy calculation / reporting
     cls_name_to_genus = {info["name"]: info["genus"] for info in classes.values()}
-
-    # Determine fallback name for masked/indeterminate instances
-    indeterminate_fallback = "indeterminate_sp"
-    for cls_info in classes.values():
-        if cls_info.get("species_id") == -100:
-            indeterminate_fallback = cls_info.get("name", "indeterminate_sp")
-            break
 
     # 3. Strip pre-existing broad conf_* columns (keep broad detection score Conf)
     cols_to_drop = [c for c in df.columns if c.startswith("conf_") and c != "Conf"]
@@ -89,7 +115,11 @@ def classify_detector_boxes(
 
     stage2_species = []
     stage2_confs = []
+    pred_genus_names = []
+    genus_confs = []
+    is_resolved_flags = []
     species_probs_matrix = np.zeros((len(df), num_species))
+    genus_probs_matrix = np.zeros((len(df), num_genera))
 
     print(f"Running Stage 2 inference on {len(df)} predicted bounding boxes...")
 
@@ -109,40 +139,79 @@ def classify_detector_boxes(
                 w, h = image.size
                 tlx, tly, brx, bry = row["TLx"], row["TLy"], row["BRx"], row["BRy"]
                 crop = image.crop((max(0, int(tlx)), max(0, int(tly)), min(w, int(brx)), min(h, int(bry))))
-                
+
                 if crop.width > 0 and crop.height > 0:
                     batch_tensors.append(transform(crop))
                     valid_indices.append(offset)
             except Exception:
                 continue
 
-        batch_preds = ["unknown"] * len(batch_df)
-        batch_top_confs = [0.0] * len(batch_df)
+        batch_species = ["unknown"] * len(batch_df)
+        batch_species_conf = [0.0] * len(batch_df)
+        batch_genus = ["unknown"] * len(batch_df)
+        batch_genus_conf = [0.0] * len(batch_df)
+        batch_resolved = [None] * len(batch_df)
 
         if batch_tensors:
             input_tensor = torch.stack(batch_tensors).to(device)
             with torch.no_grad():
-                _, species_logits = model(input_tensor)
-                probs = torch.softmax(species_logits, dim=1).cpu().numpy()
-                top_confs = probs.max(axis=1)
-                pred_ids = probs.argmax(axis=1)
+                genus_logits, species_logits = model(input_tensor)
+                genus_probs = torch.softmax(genus_logits, dim=1).cpu().numpy()
+                species_probs = torch.softmax(species_logits, dim=1).cpu().numpy()
 
             for i, valid_offset in enumerate(valid_indices):
-                pid = pred_ids[i]
-                batch_preds[valid_offset] = species_id_to_classname.get(pid, indeterminate_fallback)
-                batch_top_confs[valid_offset] = top_confs[i]
                 global_idx = start_idx + valid_offset
-                species_probs_matrix[global_idx] = probs[i]
+                genus_probs_matrix[global_idx] = genus_probs[i]
+                species_probs_matrix[global_idx] = species_probs[i]
 
-        stage2_species.extend(batch_preds)
-        stage2_confs.extend(batch_top_confs)
+                # --- Genus-conditioned decoding ---
+                # Pick the genus head's top genus, then choose the best
+                # species-head candidate restricted to that genus's slots.
+                # This guarantees the reported species is always consistent
+                # with the reported genus, and naturally surfaces
+                # genus-only placeholder classes when that genus has no
+                # resolved-species candidates competing for probability mass.
+                pred_gid = int(genus_probs[i].argmax())
+                g_conf = float(genus_probs[i][pred_gid])
+                candidate_sp_ids = genus_id_to_species_ids.get(pred_gid, [])
+
+                if candidate_sp_ids:
+                    candidate_probs = species_probs[i][candidate_sp_ids]
+                    best_local = int(candidate_probs.argmax())
+                    final_sp_id = candidate_sp_ids[best_local]
+                    final_sp_conf = float(candidate_probs[best_local])
+                    sp_name = species_id_to_classname.get(final_sp_id, "indeterminate_sp")
+                    resolved = species_id_is_resolved.get(final_sp_id, True)
+                else:
+                    # Genus has no species-head slot at all (taxonomy not yet
+                    # updated for it) — fall back to reporting genus only.
+                    sp_name = f"{genus_id_map.get(pred_gid, 'unknown')}_indeterminate"
+                    final_sp_conf = g_conf
+                    resolved = False
+
+                batch_species[valid_offset] = sp_name
+                batch_species_conf[valid_offset] = final_sp_conf
+                batch_genus[valid_offset] = genus_id_map.get(pred_gid, "unknown")
+                batch_genus_conf[valid_offset] = g_conf
+                batch_resolved[valid_offset] = resolved
+
+        stage2_species.extend(batch_species)
+        stage2_confs.extend(batch_species_conf)
+        pred_genus_names.extend(batch_genus)
+        genus_confs.extend(batch_genus_conf)
+        is_resolved_flags.extend(batch_resolved)
 
     # 6. Append Stage 2 Results
+    df["pred_genus"] = pred_genus_names
+    df["genus_conf"] = genus_confs
     df["stage2_species"] = stage2_species
     df["stage2_conf"] = stage2_confs
+    df["species_is_resolved"] = is_resolved_flags  # False => genus-only call (e.g. "henricia_sp")
 
     for sp_id, sp_name in enumerate(species_names):
         df[f"conf_{sp_name}"] = species_probs_matrix[:, sp_id]
+    for g_id, g_name in enumerate(genus_names):
+        df[f"conf_genus_{g_name}"] = genus_probs_matrix[:, g_id]
 
     out_path = Path(out_csv)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -151,19 +220,28 @@ def classify_detector_boxes(
     # 7. Evaluate Performance on True Positives
     tp_df = df[df["truedetect"] == True].copy()
     tp_df["gt_genus"] = tp_df["gt_label"].map(cls_name_to_genus)
-    tp_df["pred_genus"] = tp_df["stage2_species"].map(cls_name_to_genus)
 
-    # Genus Accuracy
+    # Genus Accuracy — now compared directly against the genus HEAD's own
+    # prediction, not re-derived from the final species name. This is the
+    # metric that was previously impossible to get right for genus-only
+    # ground truth, since the species head had nowhere to put them.
     eval_genus_tp = tp_df[tp_df["gt_genus"].notna()]
     correct_g = (eval_genus_tp["pred_genus"] == eval_genus_tp["gt_genus"]).sum()
     total_g = len(eval_genus_tp)
     acc_genus = (correct_g / total_g * 100) if total_g > 0 else 0.0
 
-    # Fine Species Accuracy
+    # Fine Species Accuracy (includes genus-only classes as exact-match targets now)
     eval_sp_tp = tp_df[tp_df["gt_label"].isin(species_names)]
     correct_sp = (eval_sp_tp["stage2_species"] == eval_sp_tp["gt_label"]).sum()
     total_sp = len(eval_sp_tp)
     acc_species = (correct_sp / total_sp * 100) if total_sp > 0 else 0.0
+
+    # Accuracy specifically on genus-only ground truth (e.g. Henricia, Sclerasterias)
+    genus_only_names = [n for sid, n in species_id_to_classname.items() if not species_id_is_resolved.get(sid, True)]
+    eval_gonly_tp = tp_df[tp_df["gt_label"].isin(genus_only_names)]
+    correct_gonly = (eval_gonly_tp["stage2_species"] == eval_gonly_tp["gt_label"]).sum()
+    total_gonly = len(eval_gonly_tp)
+    acc_gonly = (correct_gonly / total_gonly * 100) if total_gonly > 0 else float("nan")
 
     print("\n================ SYSTEM EVALUATION SUMMARY ================")
     print(f"Total Broad Detections Evaluated : {len(df)}")
@@ -171,6 +249,8 @@ def classify_detector_boxes(
     print(f"Stage 1 False Positives (FP)    : {(df['truedetect'] == False).sum()}")
     print(f"Stage 2 Genus Accuracy on TPs   : {acc_genus:.2f}% ({correct_g}/{total_g})")
     print(f"Stage 2 Species Accuracy on TPs : {acc_species:.2f}% ({correct_sp}/{total_sp})")
+    if total_gonly > 0:
+        print(f"Stage 2 Genus-Only Accuracy     : {acc_gonly:.2f}% ({correct_gonly}/{total_gonly})  [{genus_only_names}]")
     print("===========================================================\n")
 
 

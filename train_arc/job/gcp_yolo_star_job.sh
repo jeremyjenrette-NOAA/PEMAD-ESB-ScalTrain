@@ -9,7 +9,7 @@
 # out in seconds instead of after a full training run with contaminated
 # labels.
 #
-# nohup ./job/gcp_yolo_job.sh > ./log/yolo_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+# nohup ./job/gcp_yolo_star_job.sh > ./log/yolo_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 # ==============================================================================
 set -e
 
@@ -103,7 +103,7 @@ python config/train_classifier.py \
     --crop_dir "${CROP_DIR}" \
     --taxonomy_json "${TAXONOMY_JSON}" \
     --backbone convnext_tiny \
-    --epochs 60 \
+    --epochs 45 \
     --num_workers 0 \
     --out_weights ${RUN_DIR}/weights/${LABEL}_tax.pt
 
