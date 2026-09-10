@@ -77,6 +77,12 @@ python config/run_yolo.py \
     --project_dir "${PROJECT_DIR}" \
     --exist_ok
 
+source config/write_val.sh
+
+VAL_IMG_CSV="${RUN_DIR}/eval/val_images${YEAR}_${MODEL_TAG}.csv"
+
+write_val_image_csv "${BROAD_YOLO_ROOT}" "$VAL_IMG_CSV"
+
 # ─── Step 4: Stage 1 Broad Evaluation (validates taxonomy again internally) ───
 python config/eval_yolo_detections_hung_multi.py \
     --year ${YEAR} \
@@ -103,7 +109,7 @@ python config/train_classifier.py \
     --crop_dir "${CROP_DIR}" \
     --taxonomy_json "${TAXONOMY_JSON}" \
     --backbone convnext_tiny \
-    --epochs 45 \
+    --epochs 100 \
     --num_workers 0 \
     --out_weights ${RUN_DIR}/weights/${LABEL}_tax.pt
 
