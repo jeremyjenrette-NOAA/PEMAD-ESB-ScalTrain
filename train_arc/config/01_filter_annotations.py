@@ -14,10 +14,10 @@ Writes:
   - <out-dir>/empties2224.csv
 
 Usage:
-    python 01_filter_annotations.py \
-        --groundtruth /data2226/annotations/groundtruth2226.csv \
-        --supplemental /data2226/annotations/groundtruth2226_supplemental.csv \
-        --empties /data2226/annotations/empties2226.csv \
+    python config/01_filter_annotations.py \
+        --groundtruth data2226/annotations/groundtruth2226.csv \
+        --supplemental data2226/annotations/groundtruth2226_supplemental.csv \
+        --empties data2226/annotations/empties2226.csv \
         --out-dir scallop2224/annotations \
         --years 2022 2023 2024
 """
