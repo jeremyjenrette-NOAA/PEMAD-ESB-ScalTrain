@@ -31,7 +31,7 @@ python config/run_vit.py \
     --model ${MODEL} \
     --label ${LABEL} \
     --epochs 130 \
-    --imgsz 1024 \
+    --imgsz 640 \
     --batch 4 \
     --workers 0 \
     --project_dir "${PROJECT_DIR}" \
@@ -54,8 +54,8 @@ python config/eval_yolo_detections_hung_multi.py \
     --out_csv ${RUN_DIR}/eval/autotest${YEAR}_${MODEL_TAG}.csv \
     --gt_out_csv ${RUN_DIR}/eval/mantest${YEAR}_${MODEL_TAG}.csv \
     --out_fn_csv ${RUN_DIR}/eval/fn${YEAR}_${MODEL_TAG}.csv \
-    --imgsz 1024 \
-    --conf 0.01 \
+    --imgsz 640 \
+    --conf 0.1 \
     --nms_iou 0.65 \
     --match_iou 0.1 \
     --max_det 600 \
