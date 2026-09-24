@@ -28,9 +28,9 @@ export PYTORCH_ALLOC_CONF=expandable_segments:True
 export CUDA_VISIBLE_DEVICES=0
 
 # ─── 2. Parameter & Directory Configurations ──────────────────────────────────
-YEAR=2226
-LABEL=data
-DATA_ROOT="data2226"
+YEAR=2224
+LABEL=scallop
+DATA_ROOT="scallop2224"
 
 BASE_DIR="/home/user/PEMAD-ESB-ScalTrain/train_arc"
 JOB_ID="gcp_$(date +%Y%m%d_%H%M%S)"
