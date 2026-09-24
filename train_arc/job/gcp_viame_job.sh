@@ -128,7 +128,7 @@ python ${BASE_DIR}/config/eval_viame_detections_hung_multi.py \
   --out_csv "${JOB_OUT_DIR}/eval/autotest${YEAR}_viame_cascade.csv" \
   --gt_out_csv "${JOB_OUT_DIR}/eval/mantest${YEAR}_viame_cascade.csv" \
   --out_fn_csv "${JOB_OUT_DIR}/eval/fn${YEAR}_viame_cascade.csv" \
-  --conf 0.01 \
+  --conf 0.1 \
   --nms_iou 0.65 \
   --match_iou 0.1 \
   --max_det 600 \
