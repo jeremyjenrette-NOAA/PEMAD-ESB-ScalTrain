@@ -45,8 +45,8 @@ RANDOM_SEED = 42
 
 # Transect/block split settings
 BLOCK_SIZE = 10
-TRAIN_PER_BLOCK = 7
-TEST_PER_BLOCK = 3
+TRAIN_PER_BLOCK = 6
+TEST_PER_BLOCK = 4
 MIN_BLOCK_SIZE_TO_SPLIT = 3
 MAX_TIME_GAP_SEC = 60
 MAX_DISTANCE_KM = 0.25
@@ -54,12 +54,12 @@ MAX_FRAME_GAP = 500
 
 # Nested GAM split chunk size
 GAM_BLOCK_SIZE = 20
-GAM_TRAIN_FRAC_WITHIN_TEST = 0.65
-GAM_TEST_FRAC_WITHIN_TEST = 0.35
+GAM_TRAIN_FRAC_WITHIN_TEST = 0.6
+GAM_TEST_FRAC_WITHIN_TEST = 0.4
 
 # Main proportions (Fallback)
-TRAIN_FRAC = 0.70
-TEST_FRAC = 0.30
+TRAIN_FRAC = 0.60
+TEST_FRAC = 0.40
 
 # Stratification settings
 N_LAT_BINS = 4
@@ -350,7 +350,7 @@ def write_yolo_files(df: pd.DataFrame, yolo_labels: dict):
 
     # YAML
     yaml_text = f"path: {YOLO_DIR.resolve()}\ntrain: images/train\nval: images/val\nnames:\n  0: {TARGET_LABEL}\n"
-    (YOLO_DIR / "label.yaml").write_text(yaml_text)
+    (YOLO_DIR / "data.yaml").write_text(yaml_text)
 
 # =========================
 # Main Execution

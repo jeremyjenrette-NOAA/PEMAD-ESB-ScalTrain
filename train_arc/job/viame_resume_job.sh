@@ -1,0 +1,176 @@
+#!/bin/bash
+#SBATCH -J viame_scal_resume
+#SBATCH --account=sharkpulse
+#SBATCH --partition=a30_normal_q
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=128G
+#SBATCH --time=160:00:00
+#SBATCH --output=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/viame_%j.out
+#SBATCH --error=/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/log/viame_%j.err
+
+set -e
+mkdir -p ./log
+
+# ─── 1. Environment & VIAME Ecosystem Initialization ───────────────────────
+echo "Initializing Python and VIAME ecosystem paths..."
+export VIAME_INSTALL="/projects/sharkpulse/archived/viame"     # <-- adjust to your VIAME install path
+if [ -f "${VIAME_INSTALL}/setup_viame.sh" ]; then
+    source ${VIAME_INSTALL}/setup_viame.sh
+else
+    echo "ERROR: VIAME setup script not found at ${VIAME_INSTALL}/setup_viame.sh"
+    exit 1
+fi
+
+export KWIVER_DEFAULT_LOG_LEVEL=info
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+export CUDA_VISIBLE_DEVICES=0
+
+# ─── 2. Parameter & Directory Configurations ────────────────────────────────
+YEAR=2226
+LABEL=data
+DATA_ROOT="data2226"
+
+BASE_DIR="/projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc"   # <-- adjust to your project root
+# RUN_ID is FIXED (not tied to SLURM_JOB_ID) so every job in a chain reuses the
+# same workdir. Netharn only resumes if it finds checkpoints in that workdir.
+# Default points at the run that timed out (598695). For a brand-new run, submit with:
+#   sbatch --export=ALL,RUN_ID=my_new_run job/viame_resume_job.sh
+RUN_ID="${RUN_ID:-slurm_598695}"
+JOB_ID="${RUN_ID}"
+JOB_OUT_DIR="${BASE_DIR}/output/${YEAR}${LABEL}_viame_${RUN_ID}"
+CKPT_DIR="${JOB_OUT_DIR}/deep_training/fit/nice/viame-netharn-detector/checkpoints"
+
+TRUTH_DIR="${BASE_DIR}/${DATA_ROOT}/viame_truth"
+TRAIN_JSON="${TRUTH_DIR}/training_truth.json"
+VAL_JSON="${TRUTH_DIR}/validation_truth.json"
+
+BACKBONE="${BASE_DIR}/check/pytorch_resnext101.pth"
+
+mkdir -p "${JOB_OUT_DIR}"
+cd "${JOB_OUT_DIR}"
+
+echo "--------------------------------------------------"
+echo "VIAME RUN ID: ${JOB_ID}"
+echo "OUTPUT DIR  : ${JOB_OUT_DIR}"
+echo "TRAIN COCO  : ${TRAIN_JSON}"
+echo "VAL COCO    : ${VAL_JSON}"
+echo "--------------------------------------------------"
+
+if [ ! -f "${TRAIN_JSON}" ] || [ ! -f "${VAL_JSON}" ]; then
+    echo "ERROR: VIAME MSCOCO groundtruth input files missing under ${TRUTH_DIR}"
+    echo "Run 04_build_viame_truth (build_viame_trainer_multiclass.py) first."
+    exit 1
+fi
+
+# ─── 2b. Chain guards ────────────────────────────────────────────────────────
+# If an earlier job in the chain already finished (and possibly purged
+# deep_training), exit instead of silently starting from scratch.
+if [ -f "${JOB_OUT_DIR}/TRAINING_DONE" ] || [ -f "${JOB_OUT_DIR}/deploy.zip" ]; then
+    echo "Training already completed for ${RUN_ID}; nothing to do."
+    exit 0
+fi
+
+N_CKPT=$(ls "${CKPT_DIR}"/_epoch_*.pt 2>/dev/null | wc -l)
+echo "SLURM JOB   : ${SLURM_JOB_ID:-none}"
+echo "Existing checkpoints in ${CKPT_DIR}: ${N_CKPT}"
+if [ "${N_CKPT}" -gt 0 ]; then
+    echo "Latest checkpoint: $(ls "${CKPT_DIR}"/_epoch_*.pt | sort | tail -n 1)"
+fi
+
+# ─── 3. Launch VIAME Model Training ─────────────────────────────────────────
+# IMPORTANT: keep every argument below IDENTICAL to the original run.
+# Netharn hashes the hyperparameters to pick the run folder (runs/.../tbpbofwl);
+# changing them creates a new folder and training restarts from epoch 0.
+echo "=== Step 1: Launching VIAME Pytorch Netharn Training Loop ==="
+
+${VIAME_INSTALL}/bin/python -m viame.pytorch.netharn.detect_fit \
+  --name=viame-netharn-detector \
+  --arch=cascade \
+  --train_dataset="${TRAIN_JSON}" \
+  --vali_dataset="${VAL_JSON}" \
+  --workdir="${JOB_OUT_DIR}/deep_training" \
+  --xpu=0 \
+  --workers=0 \
+  --normalize_inputs=True \
+  --init=noop \
+  --optim=sgd \
+  --augmenter=complex \
+  --schedule=ReduceLROnPlateau-p2-c2 \
+  --ignore_first_epochs=2 \
+  --max_epoch=40 \
+  --patience=7 \
+  --input_dims=window \
+  --window_dims=640,640 \
+  --window_overlap=0.20 \
+  --multiscale=False \
+  --batch_size=16 \
+  --bstep=4 \
+  --lr=0.001 \
+  --timeout=1209600 \
+  --sampler_backend=none \
+  --backbone_init="${BACKBONE}" \
+  --allow_unicode=False \
+  --channels=rgb
+
+touch "${JOB_OUT_DIR}/TRAINING_DONE"
+echo "=== Training Phase Complete ==="
+
+# ─── 4. Dynamic Run Evaluation ───────────────────────────────────────────────
+echo -e "\n=== Step 2: Resolving Prediction Output Environs ==="
+
+PRED_BASE="${JOB_OUT_DIR}/deep_training/fit/nice/viame-netharn-detector/eval/validation_truth"
+PRED_DIR=$(find "${PRED_BASE}" -type f -name 'dets_gid_*_v2.mscoco.json' -printf '%h\n' 2>/dev/null | sort -u | head -n 1)
+
+if [ -z "${PRED_DIR}" ]; then
+    echo "ERROR: Could not locate generated VIAME MSCOCO validation outputs under ${PRED_BASE}"
+    exit 1
+fi
+
+echo "Found validation output matrix directory: ${PRED_DIR}"
+mkdir -p "${JOB_OUT_DIR}/eval"
+
+source ${BASE_DIR}/config/write_val.sh
+VAL_IMG_CSV="${JOB_OUT_DIR}/eval/val_images${YEAR}_cas.csv"
+write_val_image_csv "${BASE_DIR}/${DATA_ROOT}/yolo" "$VAL_IMG_CSV"
+
+echo "Executing Hungarian performance evaluations..."
+python ${BASE_DIR}/config/eval_viame_detections_hung_multi.py \
+  --year ${YEAR} \
+  --model_name viame_cascade \
+  --pred_dir "${PRED_DIR}" \
+  --gt_json "${VAL_JSON}" \
+  --train_json "${TRAIN_JSON}" \
+  --out_csv "${JOB_OUT_DIR}/eval/autotest${YEAR}_viame_cascade.csv" \
+  --gt_out_csv "${JOB_OUT_DIR}/eval/mantest${YEAR}_viame_cascade.csv" \
+  --out_fn_csv "${JOB_OUT_DIR}/eval/fn${YEAR}_viame_cascade.csv" \
+  --conf 0.1 \
+  --nms_iou 0.65 \
+  --match_iou 0.1 \
+  --max_det 600 \
+  --debug_n 10 \
+  --spname scallop  # single collapsed class, matches yolo/data.yaml
+
+# ─── 5. Storage Optimization Post-Clean ─────────────────────────────────────
+echo -e "\n=== Step 3: Preserving Deployment Package & Purging Heavy Artifacts ==="
+
+DEPLOY_ZIP_SRC=$(find "${JOB_OUT_DIR}/deep_training" -name "deploy_*.zip" -type f | head -n 1)
+
+if [ -n "${DEPLOY_ZIP_SRC}" ] && [ -f "${DEPLOY_ZIP_SRC}" ]; then
+    echo "Found deployment package: ${DEPLOY_ZIP_SRC}"
+    cp -L "${DEPLOY_ZIP_SRC}" "${JOB_OUT_DIR}/deploy.zip"
+    echo "Successfully saved standalone file to: ${JOB_OUT_DIR}/deploy.zip"
+else
+    echo "WARNING: Could not locate deploy_*.zip to preserve."
+fi
+
+echo "Purging heavy training artifacts..."
+rm -rf "${JOB_OUT_DIR}/deep_training"
+
+echo "=== Storage Clean-up Complete ==="
+echo "Remaining contents of ${JOB_OUT_DIR}:"
+ls -lh "${JOB_OUT_DIR}"
+
+echo "=== VIAME End-to-End SLURM Job Successfully Dispatched ==="

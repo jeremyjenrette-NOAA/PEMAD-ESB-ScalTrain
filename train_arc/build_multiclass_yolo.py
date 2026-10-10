@@ -151,7 +151,7 @@ def parse_args():
         help="Path to output updated dataset split CSV",
     )
     parser.add_argument(
-        "--link-mode",
+        "--link_mode",
         choices=["symlink", "copy", "hardlink"],
         default="symlink",
         help="File placement strategy into yolo/images/",
