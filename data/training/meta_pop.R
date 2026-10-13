@@ -90,6 +90,13 @@ if (!"BOTTOM_DEPTH" %in% names(dat) || any(is.na(dat$BOTTOM_DEPTH))) {
 if (!"FIELD_OF_VIEW_SQ_METER" %in% names(dat)) dat$FIELD_OF_VIEW_SQ_METER <- NA
 if (!"MILLIMETER_PER_PIXEL" %in% names(dat)) dat$MILLIMETER_PER_PIXEL <- NA
 
+# 2026 roll sensor reads ~46.12 deg in level flight (median of 5.69M survey images, SD 0.47 deg),
+# a mounting/convention offset rather than real tilt. Remove it before projecting the footprint,
+# and recompute every row so previously stored (inflated) values are replaced. Fixed 2026-10-13.
+ROLL_OFFSET_2026_DEG <- 46.12
+dat$FIELD_OF_VIEW_SQ_METER <- NA
+dat$MILLIMETER_PER_PIXEL <- NA
+
 # Identify rows that need computation
 needs_fov <- is.na(dat$FIELD_OF_VIEW_SQ_METER)
 needs_mm_px <- is.na(dat$MILLIMETER_PER_PIXEL)
@@ -100,7 +107,7 @@ if (any(rows_to_process)) {
   results <- t(mapply(
     calc_camera_metrics,
     altitude = dat$ALTIMETER_ALTITUDE_METER[rows_to_process],
-    roll = dat$VEHICLE_ROLL_ANGLE[rows_to_process],
+    roll = dat$VEHICLE_ROLL_ANGLE[rows_to_process] - ROLL_OFFSET_2026_DEG,
     pitch = dat$VEHICLE_PITCH_ANGLE[rows_to_process]
   ))
   
