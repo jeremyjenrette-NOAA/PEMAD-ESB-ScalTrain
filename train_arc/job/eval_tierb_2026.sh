@@ -25,8 +25,6 @@
 #
 # Toggle steps:  BUILD=0 to reuse built sets; RUN_2026=0 / RUN_CALPOOL=0 to skip one.
 # ==============================================================================
-set -euo pipefail
-
 module reset
 module load Miniconda3/24.7.1-0
 source ~/.bashrc
@@ -34,6 +32,9 @@ cd /projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/
 conda activate scallopdet
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 export CUDA_VISIBLE_DEVICES=0
+# Strict error handling only after the environment is loaded: /etc/bashrc and conda's
+# activate scripts reference unset variables, so -u is deliberately not used.
+set -eo pipefail
 
 # ─── Model under test (2022-2024 weights) ──────────────────────────────────────
 TRAIN_YEAR=2224
@@ -41,7 +42,7 @@ LABEL=scallop
 MODEL=check/yolo12n.pt
 JOB=441288
 MODEL_TAG=$(basename "$MODEL" .pt | tr '.-' '__')
-RUN_DIR="output/${TRAIN_YEAR}${LABEL}_${MODEL_TAG}_${JOB}"
+RUN_DIR="output/2224scallop_yolo12n_slurm_598580"
 WEIGHTS="${RUN_DIR}/weights/best.pt"
 
 # ─── Inputs ────────────────────────────────────────────────────────────────────
