@@ -4,8 +4,8 @@ library(data.table)
 # -------------------------
 # Paths
 # -------------------------
-img_dir <- "/Volumes/PortableSSD/saltnoaa/images/2024tr/"
-anno_csv <- "../data/raw/groundtruth24.csv"
+img_dir <- "/Volumes/PortableSSD/saltnoaa/images/star24/"
+anno_csv <- "~/saltnoaa/PEMAD-ESB-ScalTrain/data/raw/groundtruth_star24.csv"
 
 # -------------------------
 # List images
@@ -84,8 +84,8 @@ for (img in sample_imgs) {
 
 
 sample_imgs
-imgfile = sample_imgs[3]
-imgfile = "202403.20240514.225635676.10616.png"
+imgfile = sample_imgs[1]
+# imgfile = "202403.20240514.225635676.10616.png"
 jpeg(file = paste("~/Downloads/",imgfile,sep=""), width = 1600, height = 1200)
 plot_image_with_boxes(imgfile)
 dev.off()
