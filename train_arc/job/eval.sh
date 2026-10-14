@@ -20,7 +20,7 @@ cd /projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/
 conda activate scallopdet
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 # ─── Run training ───────────────────────────────────────
-YEAR=2226
+YEAR=2224
 MODEL=check/yolo12n.pt
 JOB=441288
 LABEL=scallop
@@ -43,7 +43,7 @@ VAL_IMG_CSV="${RUN_DIR}/eval/val_images${YEAR}_${MODEL_TAG}.csv"
 
 write_val_image_csv "data${YEAR}/yolo" "$VAL_IMG_CSV"
 
-srun python config/eval_yolo_detections_hung.py \
+srun python config/eval_yolo_detections_hung_multi.py \
     --year ${YEAR} \
     --model_name ${MODEL_TAG} \
     --run_dir ${RUN_DIR} \
@@ -52,11 +52,12 @@ srun python config/eval_yolo_detections_hung.py \
     --out_csv ${RUN_DIR}/eval/autotest${YEAR}_${MODEL_TAG}.csv \
     --gt_out_csv ${RUN_DIR}/eval/mantest${YEAR}_${MODEL_TAG}.csv \
     --out_fn_csv ${RUN_DIR}/eval/fn${YEAR}_${MODEL_TAG}.csv \
-    --imgsz 1024 \
-    --conf 0.01 \
+    --imgsz 640 \
+    --conf 0.1 \
     --nms_iou 0.65 \
     --match_iou 0.1 \
-    --max_det 300 \
+    --max_det 600 \
     --debug_n 10 \
     --device 0 \
-    --batch 4
+    --batch 4 \
+    --spname scallop  # single collapsed class, matches yolo/data.yaml
