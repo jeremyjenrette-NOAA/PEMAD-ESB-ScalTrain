@@ -194,6 +194,7 @@ def main():
     tp_count = 0
     fp_count = 0
     max_iu_found = 0.0
+    skipped_images: list[dict] = []
 
     # ---------------- Process Image Stream in Chunks ----------------
     # Feed the model EXACTLY the batch size. This prevents Ultralytics from 
@@ -203,20 +204,24 @@ def main():
     for chunk_start in range(0, len(images), chunk_size):
         chunk_images = images[chunk_start : chunk_start + chunk_size]
         
-        results_iter = model.predict(
-            source=[str(p) for p in chunk_images],
-            imgsz=args.imgsz,
-            conf=args.conf,
-            iou=args.nms_iou,
-            max_det=args.max_det,
-            device=args.device,
-            stream=True,
-            verbose=False,
-            batch=args.batch,
-            half=True
-        )
+        pred_kw = dict(imgsz=args.imgsz, conf=args.conf, iou=args.nms_iou, max_det=args.max_det,
+                       device=args.device, stream=True, verbose=False, batch=args.batch, half=True)
+        # Ultralytics decodes every image in the chunk before yielding any result, so one
+        # corrupt/truncated file aborts the whole chunk with OSError. Materialise the chunk;
+        # on failure, retry image by image and skip (and log) only the unreadable ones.
+        try:
+            chunk_results = list(zip(chunk_images,
+                                     model.predict(source=[str(p) for p in chunk_images], **pred_kw)))
+        except (OSError, ValueError) as e:
+            chunk_results = []
+            for p in chunk_images:
+                try:
+                    chunk_results.extend(zip([p], model.predict(source=[str(p)], **pred_kw)))
+                except (OSError, ValueError) as e_one:
+                    print(f"WARNING: skipping unreadable image {p.name}: {e_one}")
+                    skipped_images.append({"Imagename": p.name, "error": str(e_one)})
 
-        for img_path, res in zip(chunk_images, results_iter):
+        for img_path, res in chunk_results:
             fname = img_path.name
 
             try:
@@ -316,6 +321,10 @@ def main():
     if f_fn:
         f_fn.close()
 
+    if skipped_images:
+        skip_csv = out_csv.parent / "skipped_images.csv"
+        pd.DataFrame(skipped_images).to_csv(skip_csv, index=False)
+        print(f"Skipped {len(skipped_images)} unreadable image(s); listed in {skip_csv}")
     print(f"Wrote detections CSV: {out_csv}  (rows={detectid})")
     if args.gt_out_csv:
         print(f"Wrote GT CSV: {args.gt_out_csv} (rows={gt_detectid})")

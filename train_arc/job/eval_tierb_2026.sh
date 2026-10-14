@@ -57,7 +57,11 @@ CALPOOL_DIR="data2224_calpool"
 # ─── Evaluator settings (match the 2226 evaluation used by the R pipeline) ─────
 CONF=0.1; NMS_IOU=0.65; MATCH_IOU=0.1; MAX_DET=600; BATCH=4
 
-BUILD=${BUILD:-1}; RUN_2026=${RUN_2026:-1}; RUN_CALPOOL=${RUN_CALPOOL:-1}
+# RUN_CALPOOL defaults OFF: the 598580 weights were trained on scallop2224, which holds
+# ~99.5% of ALL 2022-2024 annotated images (01_filter_annotations.py / 03_build_yolo_dataset.py),
+# so calpool_2224_images.csv is NOT unseen by these weights. Only enable it for weights trained
+# on the older dataset_split_2224 Detector-training split (e.g. job 441288).
+BUILD=${BUILD:-1}; RUN_2026=${RUN_2026:-1}; RUN_CALPOOL=${RUN_CALPOOL:-0}
 OUT_BASE="${RUN_DIR}/eval_tierb"
 
 # ─── Pre-flight checks ─────────────────────────────────────────────────────────
