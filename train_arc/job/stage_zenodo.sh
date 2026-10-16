@@ -37,12 +37,13 @@ for name in "${!WEIGHTS[@]}"; do
   if [[ -f "$src" ]]; then cp -L "$src" "${STAGE}/weights/${name}"; echo "weights: ${name} <- ${src}"
   else echo "WARNING: missing weights ${src} (skipped)"; fi
 done
-# Cascade R-CNN: zip the VIAME deploy folder (pipeline + model) if present.
-CASCADE_DEPLOY="${CASCADE_DEPLOY:-output/2226data_viame_slurm_598695/deep_training/fit/nice/viame-netharn-detector}"
-if [[ -d "$CASCADE_DEPLOY" ]]; then
-  (cd "$(dirname "$CASCADE_DEPLOY")" && zip -qr "$OLDPWD/${STAGE}/weights/cascade_rcnn_viame_deploy_2022-2026.zip" "$(basename "$CASCADE_DEPLOY")" -x "*/eval/*" "*/train_*/*")
+# Cascade R-CNN: VIAME/netharn deploy package (deploy_snapshot.pt + MM_CascadeRCNN model code +
+# train_info.json), exported at the end of training. No retraining needed.
+CASCADE_DEPLOY="${CASCADE_DEPLOY:-output/2226data_viame_slurm_598695/deploy.zip}"
+if [[ -f "$CASCADE_DEPLOY" ]]; then
+  cp -L "$CASCADE_DEPLOY" "${STAGE}/weights/cascade_rcnn_viame_deploy_2022-2026.zip"
   echo "weights: cascade_rcnn_viame_deploy_2022-2026.zip <- ${CASCADE_DEPLOY}"
-else echo "WARNING: missing Cascade deploy dir ${CASCADE_DEPLOY} (skipped)"; fi
+else echo "WARNING: missing Cascade deploy package ${CASCADE_DEPLOY} (skipped)"; fi
 (cd "${STAGE}/weights" && md5sum * > checksums_weights.md5 || true)
 
 # ─── Images ──────────────────────────────────────────────────────────────────
