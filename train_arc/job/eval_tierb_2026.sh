@@ -31,7 +31,14 @@ source ~/.bashrc
 cd /projects/sharkpulse/archived/PEMAD-ESB-ScalTrain/train_arc/
 conda activate scallopdet
 export PYTORCH_ALLOC_CONF=expandable_segments:True
-export CUDA_VISIBLE_DEVICES=0
+# Device: DEVICE=auto (default) uses GPU 0 when one is visible, otherwise CPU.
+# Force with DEVICE=cpu or DEVICE=0. For the CPU queue use job/eval_tierb_2026_cpu.sh.
+DEVICE=${DEVICE:-auto}
+if [[ "$DEVICE" == "auto" ]]; then
+  if python -c "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)"; then DEVICE=0; else DEVICE=cpu; fi
+fi
+if [[ "$DEVICE" != "cpu" ]]; then export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}; DEVICE=0; fi
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-8}
 # Strict error handling only after the environment is loaded: /etc/bashrc and conda's
 # activate scripts reference unset variables, so -u is deliberately not used.
 set -eo pipefail
@@ -55,7 +62,8 @@ CALPOOL_SRC="data2226/yolo"                 # holds every 2022-2026 annotated im
 CALPOOL_DIR="data2224_calpool"
 
 # ─── Evaluator settings (match the 2226 evaluation used by the R pipeline) ─────
-CONF=0.1; NMS_IOU=0.65; MATCH_IOU=0.1; MAX_DET=600; BATCH=4
+CONF=0.1; NMS_IOU=0.65; MATCH_IOU=0.1; MAX_DET=600
+BATCH=${BATCH:-$([[ "$DEVICE" == "cpu" ]] && echo 8 || echo 4)}
 
 # RUN_CALPOOL defaults OFF: the 598580 weights were trained on scallop2224, which holds
 # ~99.5% of ALL 2022-2024 annotated images (01_filter_annotations.py / 03_build_yolo_dataset.py),
@@ -76,6 +84,7 @@ TRAIN_DATA=$(python -c "import yaml;a=yaml.safe_load(open('${RUN_DIR}/args.yaml'
 echo "Weights      : ${WEIGHTS}"
 echo "Trained on   : ${TRAIN_DATA}   <-- must be the 2224 split (2022-2024 only)"
 echo "imgsz        : ${IMGSZ}"
+echo "device       : ${DEVICE}  (batch ${BATCH})"
 echo "conf/nms/iou : ${CONF} / ${NMS_IOU} / ${MATCH_IOU}   max_det ${MAX_DET}"
 
 # ─── 1. Build evaluation sets ─────────────────────────────────────────────────
@@ -106,7 +115,7 @@ run_eval () {   # $1 = set tag, $2 = YOLO root
     --gt_out_csv "${OUT}/mantest_${TAG}_${MODEL_TAG}.csv" \
     --out_fn_csv "${OUT}/fn_${TAG}_${MODEL_TAG}.csv" \
     --imgsz "${IMGSZ}" --conf "${CONF}" --nms_iou "${NMS_IOU}" --match_iou "${MATCH_IOU}" \
-    --max_det "${MAX_DET}" --batch "${BATCH}" --device 0 --debug_n 10 --spname scallop
+    --max_det "${MAX_DET}" --batch "${BATCH}" --device "${DEVICE}" --debug_n 10 --spname scallop
 }
 
 [[ "$RUN_2026"    == "1" ]] && run_eval tierb2026   "${TIERB_DIR}/yolo"

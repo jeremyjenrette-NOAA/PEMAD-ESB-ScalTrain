@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import csv
 import gc
 import torch
@@ -155,6 +156,16 @@ def main():
     if not lab_dir.exists():
         raise ValueError(f"Label dir not found: {lab_dir}")
 
+    # Fail fast on a device mismatch instead of letting every image error out.
+    use_cpu = str(args.device).lower() == "cpu"
+    if not use_cpu and not torch.cuda.is_available():
+        raise SystemExit(f"--device {args.device} requested but no CUDA device is visible. "
+                         "Run on a GPU node or pass --device cpu.")
+    if use_cpu:
+        n_thr = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count() or 1))
+        torch.set_num_threads(n_thr)
+        print(f"Running on CPU with {n_thr} threads")
+
     model = YOLO(str(weights))
 
     # ---------------- Setup Streaming CSV Writers ----------------
@@ -205,19 +216,20 @@ def main():
         chunk_images = images[chunk_start : chunk_start + chunk_size]
         
         pred_kw = dict(imgsz=args.imgsz, conf=args.conf, iou=args.nms_iou, max_det=args.max_det,
-                       device=args.device, stream=True, verbose=False, batch=args.batch, half=True)
+                       device=args.device, stream=True, verbose=False, batch=args.batch,
+                       half=not use_cpu)  # FP16 only on GPU
         # Ultralytics decodes every image in the chunk before yielding any result, so one
         # corrupt/truncated file aborts the whole chunk with OSError. Materialise the chunk;
         # on failure, retry image by image and skip (and log) only the unreadable ones.
         try:
             chunk_results = list(zip(chunk_images,
                                      model.predict(source=[str(p) for p in chunk_images], **pred_kw)))
-        except (OSError, ValueError) as e:
+        except OSError as e:  # unreadable/truncated image only
             chunk_results = []
             for p in chunk_images:
                 try:
                     chunk_results.extend(zip([p], model.predict(source=[str(p)], **pred_kw)))
-                except (OSError, ValueError) as e_one:
+                except OSError as e_one:
                     print(f"WARNING: skipping unreadable image {p.name}: {e_one}")
                     skipped_images.append({"Imagename": p.name, "error": str(e_one)})
 
