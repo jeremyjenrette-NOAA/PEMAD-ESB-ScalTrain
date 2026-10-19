@@ -181,7 +181,8 @@ def run_annotations(a):
         row = {"imagename": name, "platform": sub["platform"].iat[0],
                "n_raw_pos": len(p), "n_points": int((p["gkind"] == "point").sum()) if len(p) else 0,
                "img_path": "", "img_w": np.nan, "img_h": np.nan,
-               "n_annotations": 0, "is_empty": True, "excluded": ""}
+               "n_annotations": 0, "is_empty": True, "excluded": "",
+               "n_dropped_right": 0, "eval_w": np.nan, "cropped": False}
         if row["n_points"] and a.point_policy == "drop_image":
             row["excluded"] = "point annotation"
         src = None
@@ -195,6 +196,13 @@ def run_annotations(a):
 
         boxes = [geom_to_box(k, n) for k, n in zip(p["gkind"], p["gnums"])]
         boxes = dedup([b for b in boxes if b is not None], a.dedup_iou)
+        if a.crop_w:
+            # 2026 PNGs are side-by-side stereo pairs (3872 x 1216); annotations and the
+            # 2022-2024 training frames are the LEFT camera (1936 px). Keep boxes whose
+            # centre lies in the left frame.
+            n_before = len(boxes)
+            boxes = [b for b in boxes if (b[0] + b[2]) / 2 < a.crop_w]
+            row["n_dropped_right"] = n_before - len(boxes)
         row["n_annotations"] = len(boxes)
         row["is_empty"] = len(boxes) == 0
         for (k, n, cid) in zip(p["gkind"], p["gnums"], p["class_id"]):
@@ -211,11 +219,17 @@ def run_annotations(a):
                 manifest.append(row)
                 continue
             row.update(img_path=str(src), img_w=w, img_h=h)
+            cropped = bool(a.crop_w) and w > a.crop_w
+            if cropped:
+                w = a.crop_w
+            row.update(eval_w=w, cropped=cropped)
             lines = []
             for b in boxes:
                 y = to_yolo(b, w, h)
                 if y:
                     lines.append(f"0 {y[0]:.6f} {y[1]:.6f} {y[2]:.6f} {y[3]:.6f}")
+            # Full image is linked (no 90k extra PNGs on disk); labels are normalised to the
+            # left frame, and eval_yolo_detections_hung.py --crop_w crops at inference time.
             link(src, img_dir / name, a.link_mode)
             (lab_dir / f"{Path(name).stem}.txt").write_text("\n".join(lines) + ("\n" if lines else ""))
         manifest.append(row)
@@ -274,6 +288,9 @@ def main():
     s1.add_argument("--point_policy", choices=["drop_image", "ignore"], default="drop_image")
     s1.add_argument("--link_mode", choices=["symlink", "copy", "hardlink"], default="symlink")
     s1.add_argument("--dry_run", action="store_true", help="Manifests only; no image index, links or labels")
+    s1.add_argument("--crop_w", type=int, default=1936,
+                    help="Images wider than this are stereo pairs: labels are normalised to the left frame [0, crop_w). "
+                         "Run the evaluator with the same --crop_w. 0 = full image")
 
     s2 = sub.add_parser("list")
     s2.add_argument("--image_list", required=True, help="CSV with an 'imagename' column")

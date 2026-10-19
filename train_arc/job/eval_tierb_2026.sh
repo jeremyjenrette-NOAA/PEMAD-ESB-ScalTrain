@@ -104,8 +104,8 @@ if [[ "$BUILD" == "1" ]]; then
 fi
 
 # ─── 2. Score with the unchanged evaluator ────────────────────────────────────
-run_eval () {   # $1 = set tag, $2 = YOLO root
-  local TAG="$1" ROOT="$2" OUT="${OUT_BASE}/$1"
+run_eval () {   # $1 = set tag, $2 = YOLO root, $3 = crop width (0 = none)
+  local TAG="$1" ROOT="$2" CROP="${3:-0}" OUT="${OUT_BASE}/$1"
   mkdir -p "$OUT"
   echo "=== Evaluating ${TAG}: $(find -L "${ROOT}/images/val" -type f | wc -l) images ==="
   srun python config/eval_yolo_detections_hung.py \
@@ -115,11 +115,12 @@ run_eval () {   # $1 = set tag, $2 = YOLO root
     --gt_out_csv "${OUT}/mantest_${TAG}_${MODEL_TAG}.csv" \
     --out_fn_csv "${OUT}/fn_${TAG}_${MODEL_TAG}.csv" \
     --imgsz "${IMGSZ}" --conf "${CONF}" --nms_iou "${NMS_IOU}" --match_iou "${MATCH_IOU}" \
-    --max_det "${MAX_DET}" --batch "${BATCH}" --device "${DEVICE}" --debug_n 10 --spname scallop
+    --max_det "${MAX_DET}" --batch "${BATCH}" --device "${DEVICE}" --debug_n 10 --spname scallop \
+    --crop_w "${CROP}"
 }
 
-[[ "$RUN_2026"    == "1" ]] && run_eval tierb2026   "${TIERB_DIR}/yolo"
-[[ "$RUN_CALPOOL" == "1" ]] && run_eval calpool2224 "${CALPOOL_DIR}/yolo"
+[[ "$RUN_2026"    == "1" ]] && run_eval tierb2026   "${TIERB_DIR}/yolo" "${CROP_W:-1936}"   # 2026 PNGs are stereo pairs: left frame only
+[[ "$RUN_CALPOOL" == "1" ]] && run_eval calpool2224 "${CALPOOL_DIR}/yolo" 0
 
 # Keep the manifests next to the detections for the R side.
 [[ -f "${TIERB_DIR}/tierb_manifest.csv" ]] && cp "${TIERB_DIR}"/tierb_manifest.csv "${TIERB_DIR}"/tierb_gt_lines.csv "${TIERB_DIR}"/positive_classes.csv "${OUT_BASE}/tierb2026/" 2>/dev/null || true

@@ -130,6 +130,9 @@ def main():
     ap.add_argument("--nms_iou", type=float, default=0.7, help="NMS IoU for prediction")
     ap.add_argument("--match_iou", type=float, default=0.5, help="IoU threshold for TP matching vs GT")
     ap.add_argument("--max_det", type=int, default=600)
+    ap.add_argument("--crop_w", type=int, default=0,
+                    help="Crop images wider than this to the left frame before inference "
+                         "(2026 HabCam PNGs are 3872-px stereo pairs; use 1936). 0 = no crop")
     ap.add_argument("--device", default="0")
     ap.add_argument("--spname", default="scallop")
     ap.add_argument("--debug_n", type=int, default=10, help="Print debug for first N images with GT")
@@ -221,17 +224,32 @@ def main():
         # Ultralytics decodes every image in the chunk before yielding any result, so one
         # corrupt/truncated file aborts the whole chunk with OSError. Materialise the chunk;
         # on failure, retry image by image and skip (and log) only the unreadable ones.
-        try:
+        if args.crop_w:
+            # Stereo pairs: decode, keep the left camera frame, predict on arrays (BGR, as
+            # Ultralytics expects from cv2). Unreadable files return None and are skipped.
+            import cv2
+            ok_paths, arrays = [], []
+            for p in chunk_images:
+                im = cv2.imread(str(p), cv2.IMREAD_COLOR)
+                if im is None:
+                    print(f"WARNING: skipping unreadable image {p.name}")
+                    skipped_images.append({"Imagename": p.name, "error": "cv2.imread returned None"})
+                    continue
+                ok_paths.append(p)
+                arrays.append(np.ascontiguousarray(im[:, :args.crop_w]) if im.shape[1] > args.crop_w else im)
+            chunk_results = list(zip(ok_paths, model.predict(source=arrays, **pred_kw))) if arrays else []
+        else:
+          try:
             chunk_results = list(zip(chunk_images,
                                      model.predict(source=[str(p) for p in chunk_images], **pred_kw)))
-        except OSError as e:  # unreadable/truncated image only
-            chunk_results = []
-            for p in chunk_images:
-                try:
-                    chunk_results.extend(zip([p], model.predict(source=[str(p)], **pred_kw)))
-                except OSError as e_one:
-                    print(f"WARNING: skipping unreadable image {p.name}: {e_one}")
-                    skipped_images.append({"Imagename": p.name, "error": str(e_one)})
+          except OSError as e:  # unreadable/truncated image only
+              chunk_results = []
+              for p in chunk_images:
+                  try:
+                      chunk_results.extend(zip([p], model.predict(source=[str(p)], **pred_kw)))
+                  except OSError as e_one:
+                      print(f"WARNING: skipping unreadable image {p.name}: {e_one}")
+                      skipped_images.append({"Imagename": p.name, "error": str(e_one)})
 
         for img_path, res in chunk_results:
             fname = img_path.name
@@ -240,6 +258,8 @@ def main():
                 from PIL import Image
                 with Image.open(img_path) as im:
                     w, h = im.size
+                if args.crop_w and w > args.crop_w:
+                    w = args.crop_w   # boxes and labels live in the left frame
             except Exception as e:
                 print(f"WARNING: cannot open {img_path}: {e}")
                 continue
