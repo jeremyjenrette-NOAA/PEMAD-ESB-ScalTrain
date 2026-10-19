@@ -1,0 +1,23 @@
+{
+  "metadata": {
+    "upload_type": "dataset",
+    "prereserve_doi": true,
+    "title": "Data for: Automatically counting and measuring Atlantic sea scallops (Placopecten magellanicus) from underwater imagery with object detection and bias-correction",
+    "creators": [
+      {"name": "Jenrette, Jeremy F.", "affiliation": "NOAA Fisheries, Northeast Fisheries Science Center; Saltwater Inc.", "orcid": "0000-0003-2511-9334"},
+      {"name": "Hart, Deborah R.", "affiliation": "NOAA Fisheries, Northeast Fisheries Science Center", "orcid": ""},
+      {"name": "Chang, Jui-Han", "affiliation": "NOAA Fisheries, Northeast Fisheries Science Center", "orcid": ""},
+      {"name": "Fairclough, Cameron", "affiliation": "NOAA Fisheries, Northeast Fisheries Science Center", "orcid": ""},
+      {"name": "McManus, M. Conor", "affiliation": "NOAA Fisheries, Northeast Fisheries Science Center", "orcid": ""}
+    ],
+    "description": "<p>Manual annotations, image metadata, data partitions, trained detector weights (YOLOv12n, Cascade R-CNN, RT-DETR-L), detector outputs, and the Calibration-set images (8,229 HabCam images) used to develop and evaluate a two-stage generalized additive model (GAM) calibration of automated Atlantic sea scallop counts from benthic imagery (Georges Bank and Mid-Atlantic Bight, 2022&ndash;2024 and 2026). Also includes the independent 2026 survey test: YOLOv12n weights trained on 2022&ndash;2024 only, applied to every annotated 2026 image. See README.md for file and column descriptions.</p>",
+    "keywords": ["Placopecten magellanicus", "sea scallop", "HabCam", "object detection", "YOLO", "Cascade R-CNN", "RT-DETR", "generalized additive model", "calibration", "benthic imagery", "stock assessment"],
+    "license": "cc-zero",
+    "access_right": "open",
+    "version": "1.0",
+    "related_identifiers": [
+      {"identifier": "https://github.com/jeremyjenrette-NOAA/PEMAD-ESB-ScalPred", "relation": "isSupplementedBy", "resource_type": "software"},
+      {"identifier": "https://github.com/jeremyjenrette-NOAA/PEMAD-ESB-ScalTrain", "relation": "isSupplementedBy", "resource_type": "software"}
+    ]
+  }
+}
