@@ -49,6 +49,6 @@ else echo "WARNING: missing Cascade deploy package ${CASCADE_DEPLOY} (skipped)";
 # ─── Images ──────────────────────────────────────────────────────────────────
 python config/package_zenodo_images.py \
   --image_metadata "${STAGE}/image_metadata.csv" \
-  --src_dir "${SRC_IMAGES}" --out_dir "${STAGE}/images" --max_gb 9.5
+  --src_dir "${SRC_IMAGES}" --out_dir "${STAGE}/images" --max_gb "${MAX_GB:-2}"
 
 du -sh "${STAGE}"/* ; echo "=== Zenodo staging done: ${STAGE} ==="
