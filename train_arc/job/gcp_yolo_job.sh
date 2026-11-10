@@ -8,11 +8,11 @@
 #   nohup ./job/gcp_yolo_job.sh star  > ./log/yolo_star_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 #
 # Two-stage systems (crab, star):
-#   Step 0 taxonomy gate -> 1 broad labels -> 2 crops -> 3 Stage 1 train
+#   Step -1 build yolo/ from raw layout (if missing) -> 0 taxonomy gate -> 1 broad labels -> 2 crops -> 3 Stage 1 train
 #   -> 4 Stage 1 eval -> 5 Stage 2 train -> 6 cascade eval
 # (Scallop is single-stage and keeps its own scripts: gcp_yolo_scallop_job.sh / gcp_eval_scallop.sh.)
 #
-# Steps 1-2 are skipped when their outputs already exist; FORCE_PREP=1 redoes them.
+# Steps -1, 1 and 2 are skipped when their outputs already exist; FORCE_PREP=1 redoes them.
 # To add a new system: add job/systems/<name>.env and config/<LABEL>_taxonomy.json.
 # Run from train_arc/.
 # ==============================================================================
@@ -52,6 +52,19 @@ echo "ORIGINAL YOLO ROOT: ${ORIGINAL_YOLO_ROOT}"
 echo "STAGE 1 ROOT      : ${STAGE1_ROOT}"
 echo "OUTPUT DIR        : ${RUN_DIR}"
 echo "--------------------------------------------------"
+
+# ─── Step -1: build the multi-class YOLO set from the raw layout, if needed ───
+# ${DATA_DIR}/annotations/{dataset_split*.csv,groundtruth*.csv}, ${DATA_DIR}/annotated/, ${DATA_DIR}/empties/
+# Class ids come from the taxonomy JSON. Rebuilt when yolo/data.yaml is missing or FORCE_PREP=1.
+if [ "${FORCE_PREP:-0}" = "1" ] || [ ! -f "${ORIGINAL_YOLO_ROOT}/data.yaml" ]; then
+    [ -d "${DATA_DIR}/annotations" ] && [ -d "${DATA_DIR}/annotated" ] || {
+        echo "ERROR: ${DATA_DIR}/yolo is missing and there is no raw layout (annotations/, annotated/) to build it from"; exit 1; }
+    python config/build_multiclass_yolo.py \
+        --base-dir "${DATA_DIR}" \
+        --taxonomy_json "${TAXONOMY_JSON}"
+else
+    echo "Step -1 skipped: ${ORIGINAL_YOLO_ROOT}/data.yaml exists (FORCE_PREP=1 to rebuild)"
+fi
 
 [ -d "${ORIGINAL_YOLO_ROOT}/images/val" ] && [ -d "${ORIGINAL_YOLO_ROOT}/labels/val" ] || {
     echo "ERROR: ${ORIGINAL_YOLO_ROOT} is missing images/val or labels/val"; exit 1; }

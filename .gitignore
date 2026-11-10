@@ -16,3 +16,7 @@ s/copy_image.sh
 s/split_remap.py
 s/star_explore.R
 train_arc/bench_inference.json
+
+# training datasets (synced from the SSD, built on the workstation)
+train_arc/crabdata*/
+train_arc/star[0-9]*/

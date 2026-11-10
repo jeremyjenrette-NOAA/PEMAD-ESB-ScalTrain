@@ -18,10 +18,12 @@ FORCE_PREP=1 ./job/gcp_yolo_job.sh crab              # redo broad-label + crop p
 |---|---|
 | System profile (year, data label, model, epochs, broad class name, split CSV) | `job/systems/<system>.env` |
 | Taxonomy (single source of truth for class ids) | `config/<LABEL>_taxonomy.json` |
-| Data layout | `<LABEL><YEAR>/{yolo,yolo_broad,crops,annotations}` |
+| Data layout | `<LABEL><YEAR>/{annotations,annotated,empties}` in; `yolo/`, `yolo_broad/`, `crops/` built by the job |
 
-Steps: 0 taxonomy gate (JSON vs `yolo/data.yaml`) -> 1 broad labels -> 2 crops -> 3 Stage 1 train -> 4 Stage 1 eval -> 5 Stage 2 train -> 6 cascade eval.
-Steps 1-2 are skipped when their outputs exist.
+Steps: -1 build `yolo/` from the raw layout -> 0 taxonomy gate (JSON vs `yolo/data.yaml`) -> 1 broad labels -> 2 crops -> 3 Stage 1 train -> 4 Stage 1 eval -> 5 Stage 2 train -> 6 cascade eval.
+Steps -1, 1 and 2 are skipped when their outputs exist.
+
+Crab data (`crabdata2226`, 2022-2026) is prepared on the SSD under `crab_data/` (`s/build_crab_master.py`, `s/build_crab_split.py`) and pushed here with `crab_data/s/sync_crab2226.sh`.
 
 **Add a system:** create `job/systems/<name>.env` (copy `crab.env`) and `config/<LABEL>_taxonomy.json` (copy `crabdata_taxonomy.json`). No script edits.
 
