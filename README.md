@@ -14,7 +14,7 @@ This repository is a scientific product and is not official communication of the
 
 PEMAD-ESB-ScalTrain builds the training and evaluation sets and trains and scores the three sea scallop (*Placopecten magellanicus*) detectors used in Jenrette et al., *Automatically counting and measuring Atlantic sea scallops (Placopecten magellanicus) from underwater imagery with object detection and bias-correction* (Ecological Informatics, in revision): YOLOv12n and RT-DETR-L (Ultralytics) and Cascade R-CNN (VIAME). It also stages the Zenodo data record.
 
-The calibration, abundance and size analysis is in the companion repository [PEMAD-ESB-ScalPred](https://github.com/jeremyjenrette-NOAA/PEMAD-ESB-ScalPred) ([10.5281/zenodo.23967377](https://doi.org/10.5281/zenodo.23967377)). **You do not need this repository to reproduce the paper's results:** the trained weights and every detector output it produced are in the data record ([10.5281/zenodo.23481212](https://doi.org/10.5281/zenodo.23481212), published with the paper). Use it to retrain or re-score the detectors, or to train them on new imagery.
+The calibration, abundance and size analysis is in the companion repository [PEMAD-ESB-ScalPred](https://github.com/jeremyjenrette-NOAA/PEMAD-ESB-ScalPred). **You do not need this repository to reproduce the paper's results:** the trained weights and every detector output it produced are in the data record ([10.5281/zenodo.23482337](https://doi.org/10.5281/zenodo.23482337), published with the paper). Use it to retrain or re-score the detectors, or to train them on new imagery.
 
 The jobs were written for a Slurm GPU cluster (Virginia Tech ARC) and a GCP workstation; paths under `/projects/...` and the `#SBATCH` account and partition lines are site-specific and need editing before use elsewhere.
 
@@ -60,7 +60,7 @@ Ultralytics (YOLOv12n, RT-DETR-L; the laptop timing used Ultralytics 8.4.50 and 
 
 ## Citation
 
-Jenrette, J.F., Hart, D.R., Chang, J.-H., Fairclough, C., McManus, M.C. PEMAD-ESB-ScalTrain: training and evaluation of sea scallop object detectors on HabCam imagery. Zenodo. https://doi.org/10.5281/zenodo.23967411
+Jenrette, J.F., Hart, D.R., Chang, J.-H., Fairclough, C., McManus, M.C. PEMAD-ESB-ScalTrain: training and evaluation of sea scallop object detectors on HabCam imagery. Zenodo. https://doi.org/10.5281/zenodo.23482337
 
 ## License
 
