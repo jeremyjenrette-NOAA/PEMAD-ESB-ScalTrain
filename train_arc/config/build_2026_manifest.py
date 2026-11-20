@@ -24,7 +24,9 @@ is_preferred_copy   one True per imagename (copy on --prefer drive when duplicat
                     for one-row-per-image analyses
 annotated_2026      imagename is in the --annotated_csv list (e.g. tierb_manifest.csv)
 exclude_reason      non-empty rows are never processed (unparseable name, "(Copy)" files, ...)
-selected            row is processed under --scope
+frame_keep          imagename kept by the frame thinning (--frame_step, default every 5th frame
+                    across V and W; annotated images always kept; preferred-drive frames chosen first)
+selected            row is processed (not excluded, frame_keep, and --scope)
 chunk_id            processing chunk (1..N) for selected rows, ordered habcam_primary first,
                     then auv, then pre_survey; within a group by date, time, drive, so both
                     copies of a duplicate land in the same chunk
@@ -61,6 +63,51 @@ def to_native(p: str) -> str:
     return p
 
 
+def thin_frames(u: pd.DataFrame, step: int) -> pd.DataFrame:
+    """Keep about every `step`-th camera frame, using the union of all drives.
+
+    u: one row per unique imagename with date, time, frame and tier (0 = annotated, always kept;
+    1 = has a copy on the preferred drive; 2 = other drives only). Frames are grouped into
+    sequences (per date; a new sequence starts whenever the frame counter goes backwards).
+    Tiers are filled in order: a frame is kept only if it is >= `step` frames from every frame
+    already kept in its sequence, so preferred-drive frames are chosen first and other-drive
+    frames only fill the gaps. Where the images on disk are already >= `step` frames apart,
+    all are kept.
+    """
+    u = u.sort_values(["date", "time", "frame"]).copy()
+    f = u["frame"].to_numpy(dtype=np.int64)
+    new = np.r_[True, (u["date"].to_numpy()[1:] != u["date"].to_numpy()[:-1]) | (f[1:] < f[:-1])]
+    u["seq"] = np.cumsum(new)
+    keep = np.zeros(len(u), dtype=bool)
+    pos = {i: k for k, i in enumerate(u.index)}
+    for _, g in u.groupby("seq", sort=False):
+        kept = np.empty(0, dtype=np.int64)
+        for tier in (0, 1, 2):
+            c = g[g["tier"].eq(tier)]
+            if c.empty:
+                continue
+            cf = c["frame"].to_numpy(dtype=np.int64)
+            acc = np.zeros(len(cf), dtype=bool)
+            if tier == 0:
+                acc[:] = True
+            else:
+                lo, hi = np.iinfo(np.int64).min // 2, np.iinfo(np.int64).max // 2
+                kp = np.r_[lo, kept, hi]                         # kept frames from earlier tiers, padded
+                j = np.searchsorted(kp, cf)
+                prev_k, next_k = kp[j - 1], kp[j]
+                last = lo
+                for i in range(len(cf)):
+                    prev = max(prev_k[i], last)
+                    if cf[i] - prev >= step and next_k[i] - cf[i] >= step:
+                        acc[i] = True
+                        last = cf[i]
+            for idx in c.index[acc]:
+                keep[pos[idx]] = True
+            kept = np.sort(np.r_[kept, cf[acc]])
+    u["thin_keep"] = keep
+    return u
+
+
 def read_inventory(path: str, drive: str) -> pd.DataFrame:
     with open(to_native(path), encoding="utf-8", errors="replace") as f:
         paths = [ln.rstrip("\r\n") for ln in f]
@@ -87,6 +134,10 @@ def main():
     ap.add_argument("--primary_month", default="202605", help="YYYYMM of the primary HabCam survey")
     ap.add_argument("--annotated_csv", default="",
                     help="Optional CSV with an 'imagename' column (e.g. tierb_manifest.csv) to flag annotated images")
+    ap.add_argument("--frame_step", type=int, default=5,
+                    help="Keep about every Nth camera frame across all drives (>= N frames apart); 0/1 = keep all")
+    ap.add_argument("--keep_annotated", type=int, default=1,
+                    help="1 = annotated images (--annotated_csv) are always kept by the frame thinning")
     ap.add_argument("--exclude_regex", default=r"\(copy\)|\s",
                     help="Imagenames matching this (case-insensitive) are excluded")
     a = ap.parse_args()
@@ -115,7 +166,7 @@ def main():
     df["month"] = df["date"].str[:6]
     df["frame"] = pd.to_numeric(df["frame"], errors="coerce").astype("Int64")
     df["datetime"] = pd.to_datetime(df["date"] + df["time"].str[:6], format="%Y%m%d%H%M%S", errors="coerce") \
-        + pd.to_timedelta(pd.to_numeric(df["time"].str[6:], errors="coerce"), unit="ms")
+        + pd.to_timedelta(pd.to_numeric(df["time"].str[6:], errors="coerce").fillna(0), unit="ms")
     df["group"] = np.select([df["month"].eq(a.primary_month), df["month"].gt(a.primary_month),
                              df["month"].lt(a.primary_month)],
                             ["habcam_primary", "auv", "pre_survey"], default="unknown")
@@ -144,8 +195,27 @@ def main():
     else:
         df["annotated_2026"] = False
 
+    # --- frame thinning on the union of drives
+    okdf = df[df["exclude_reason"].eq("")]
+    if a.frame_step and a.frame_step > 1:
+        u = okdf.sort_values("_prefrank").drop_duplicates("imagename")[["imagename", "date", "time", "frame", "drive"]].copy()
+        on_pref = set(okdf.loc[okdf["drive"].eq(pref), "imagename"])
+        ann_names = set(okdf.loc[okdf["annotated_2026"], "imagename"]) if a.keep_annotated else set()
+        u["tier"] = np.where(u["imagename"].isin(ann_names), 0, np.where(u["imagename"].isin(on_pref), 1, 2))
+        u = thin_frames(u, a.frame_step)
+        keep_names = set(u.loc[u["thin_keep"], "imagename"])
+        print(f"Frame thinning (every {a.frame_step}th frame across drives): keep {len(keep_names):,} of "
+              f"{len(u):,} unique images ({u['seq'].nunique():,} frame sequences; "
+              f"{int((u['thin_keep'] & u['tier'].eq(0)).sum()):,} annotated kept, "
+              f"{int((u['thin_keep'] & u['tier'].eq(1)).sum()):,} from {pref}, "
+              f"{int((u['thin_keep'] & u['tier'].eq(2)).sum()):,} from other drives only)")
+        df["frame_keep"] = df["imagename"].isin(keep_names)
+    else:
+        df["frame_keep"] = True
+
     # --- selection and chunks
-    df["selected"] = df["exclude_reason"].eq("") & (df["is_preferred_copy"] if a.scope == "preferred" else True)
+    df["selected"] = (df["exclude_reason"].eq("") & df["frame_keep"]
+                      & (df["is_preferred_copy"] if a.scope == "preferred" else True))
     df["_g"] = df["group"].map(GROUP_ORDER).fillna(9)
     df = df.sort_values(["_g", "date", "time", "frame", "drive"], na_position="last").reset_index(drop=True)
     # chunks never span two groups, so running one group (--groups) never half-finishes a chunk
@@ -161,7 +231,7 @@ def main():
 
     cols = ["image_uid", "imagename", "drive", "src_path", "cruise", "date", "month", "time", "datetime",
             "frame", "group", "n_copies", "is_duplicate", "other_drives", "color_corrected_assumed",
-            "is_preferred_copy", "annotated_2026", "exclude_reason", "selected", "chunk_id"]
+            "is_preferred_copy", "annotated_2026", "exclude_reason", "frame_keep", "selected", "chunk_id"]
     df = df[cols]
     man_path = out / "manifest_2026.csv.gz"
     df.to_csv(man_path, index=False, compression="gzip")
@@ -170,7 +240,8 @@ def main():
     s = df[df["exclude_reason"].eq("")]
     by = (s.groupby(["group", "drive"])
             .agg(files=("imagename", "size"), duplicates=("is_duplicate", "sum"),
-                 preferred=("is_preferred_copy", "sum"), selected=("selected", "sum"),
+                 preferred=("is_preferred_copy", "sum"), frame_keep=("frame_keep", "sum"),
+                 selected=("selected", "sum"),
                  first_date=("date", "min"), last_date=("date", "max"))
             .reset_index())
     print("\n=== Files by group and drive ===")

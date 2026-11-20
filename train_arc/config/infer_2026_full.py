@@ -15,6 +15,8 @@ probe    Reads a small sample per group x drive (and duplicate pairs) and report
          the two copies of duplicated images, and the GPU/library setup. Run this first.
 infer    Processes the manifest chunk by chunk (build_2026_manifest.py). A chunk is done
          when its images_cNNNNN.csv exists, so re-running the same command resumes.
+compare  Checks a --subset_csv run of annotated images against the Tier B evaluation's
+         autotest CSV (same boxes and confidences expected, up to GPU/FP16 noise).
 combine  Concatenates the per-chunk files into detections_2026_all.csv.gz and
          images_2026_all.csv.gz and prints a summary.
 
@@ -42,6 +44,14 @@ import re
 import sys
 import time
 from pathlib import Path
+
+# torch must be imported BEFORE numpy/pandas/cv2 on Windows: if another package loads its own
+# (older) MSVC runtime DLL first, torch's c10.dll fails with "WinError 1114".
+try:
+    import torch  # noqa: F401
+    _TORCH_ERR = ""
+except Exception as _e:  # reported by env_info / load_model
+    _TORCH_ERR = f"{type(_e).__name__}: {_e}"
 
 import numpy as np
 import pandas as pd
@@ -94,6 +104,8 @@ def env_info() -> dict:
     info = {"python": sys.version.split()[0], "platform": platform.platform(), "opencv": cv2.__version__,
             "numpy": np.__version__, "pandas": pd.__version__}
     try:
+        if _TORCH_ERR:
+            raise ImportError(_TORCH_ERR)
         import torch
         info.update(torch=torch.__version__, cuda_available=bool(torch.cuda.is_available()),
                     gpu=torch.cuda.get_device_name(0) if torch.cuda.is_available() else "")
@@ -261,6 +273,11 @@ def run_probe(a, man: pd.DataFrame):
 
 # ----------------------------------------------------------------------------- model
 def load_model(a):
+    if _TORCH_ERR:
+        sys.exit("PyTorch cannot be imported in this Python:\n  " + _TORCH_ERR + "\n"
+                 "Check with:  python -c \"import torch; print(torch.__version__, torch.cuda.is_available())\"\n"
+                 "WinError 1114 on c10.dll usually means the Microsoft Visual C++ Redistributable (x64) is missing/"
+                 "outdated, or a CPU/CUDA wheel mismatch; see the notes in job/infer_2026_full.sh.")
     import torch
     from ultralytics import YOLO
     dev = str(a.device)
@@ -290,12 +307,13 @@ def run_infer(a, man: pd.DataFrame):
         print(f"--subset_csv: outputs go to {out}")
     cdir = out / "chunks"; cdir.mkdir(parents=True, exist_ok=True)
     m = man[man["selected"] & man["chunk_id"].notna()]
+    if a.subset_csv:  # listed images regardless of frame thinning; preferred copy only
+        keep = set(pd.read_csv(to_native(a.subset_csv), usecols=["imagename"])["imagename"].astype(str))
+        m = man[man["exclude_reason"].eq("") & man["is_preferred_copy"] & man["imagename"].isin(keep)].copy()
+        m["chunk_id"] = np.arange(len(m)) // 10000 + 1
+        print(f"--subset_csv: {len(m):,} manifest rows match {len(keep):,} listed names")
     if a.groups:
         m = m[m["group"].isin([g.strip() for g in a.groups.split(",")])]
-    if a.subset_csv:
-        keep = set(pd.read_csv(to_native(a.subset_csv), usecols=["imagename"])["imagename"].astype(str))
-        m = m[m["imagename"].isin(keep)]
-        print(f"--subset_csv: {len(m):,} manifest rows match {len(keep):,} listed names")
     chunks = sorted(int(c) for c in m["chunk_id"].unique())
     if a.chunks:
         want = parse_ranges(a.chunks)
@@ -323,7 +341,15 @@ def run_infer(a, man: pd.DataFrame):
 
     save_dir = to_native(a.save_crops) if a.save_crops else None
     t_all, n_all = time.perf_counter(), 0
+    stop_file = out / "STOP"
+    if stop_file.exists():
+        stop_file.unlink()
+    print(f"To stop cleanly after the current chunk: touch {stop_file}")
     for k, c in enumerate(todo, 1):
+        if stop_file.exists():
+            print(f"STOP file found: stopping before chunk {c}. Re-run the same command to resume.")
+            stop_file.unlink()
+            break
         rows = m[m["chunk_id"] == c].to_dict("records")
         t0 = time.perf_counter()
         img_rows, det_rows = [], []
@@ -427,9 +453,52 @@ def run_combine(a, man: pd.DataFrame):
     print(f"Wrote {out/'images_2026_all.csv.gz'} and {out/'detections_2026_all.csv.gz'} ({len(de):,} detections)")
 
 
+# ----------------------------------------------------------------------------- compare
+def run_compare(a, man: pd.DataFrame):
+    """Check this pipeline against the Tier B evaluation output on the same images."""
+    out = Path(to_native(a.out_dir))
+    if not list((out / "chunks").glob("images_c*.csv")):
+        sys.exit(f"No chunk outputs under {out/'chunks'}: run the --subset_csv inference first.")
+    im = pd.concat((pd.read_csv(p) for p in sorted((out / "chunks").glob("images_c*.csv"))), ignore_index=True)
+    de = pd.concat((pd.read_csv(p) for p in sorted((out / "chunks").glob("dets_c*.csv"))), ignore_index=True)
+    ref = pd.read_csv(to_native(a.ref_csv), low_memory=False)
+    im = im[im["status"].eq("ok")].drop_duplicates("Imagename")
+    names = set(im["Imagename"])
+    de = de[de["Imagename"].isin(names)].drop_duplicates(["Imagename", "TLx", "TLy", "BRx", "BRy"])
+    ref = ref[ref["Imagename"].isin(names)]
+    n_new = de.groupby("Imagename").size().reindex(sorted(names), fill_value=0)
+    n_ref = ref.groupby("Imagename").size().reindex(sorted(names), fill_value=0)
+    print(f"Images compared: {len(names):,};  detections new {len(de):,} vs Tier B eval {len(ref):,}")
+    print(f"Images with the same number of detections: {(n_new == n_ref).mean():.1%}")
+    rows = []
+    for name in names:
+        p = de.loc[de["Imagename"].eq(name), ["TLx", "TLy", "BRx", "BRy", "Conf"]].to_numpy(float)
+        r = ref.loc[ref["Imagename"].eq(name), ["TLx", "TLy", "BRx", "BRy", "Conf"]].to_numpy(float)
+        if len(r) == 0:
+            continue
+        for b in r:
+            if len(p) == 0:
+                rows.append({"iou": 0.0, "dconf": np.nan, "ref_conf": b[4]}); continue
+            ix = np.clip(np.minimum(p[:, 2], b[2]) - np.maximum(p[:, 0], b[0]), 0, None)
+            iy = np.clip(np.minimum(p[:, 3], b[3]) - np.maximum(p[:, 1], b[1]), 0, None)
+            inter = ix * iy
+            iou = inter / ((p[:, 2]-p[:, 0])*(p[:, 3]-p[:, 1]) + (b[2]-b[0])*(b[3]-b[1]) - inter)
+            k = int(np.argmax(iou))
+            rows.append({"iou": float(iou[k]), "dconf": float(p[k, 4] - b[4]), "ref_conf": b[4]})
+    r = pd.DataFrame(rows)
+    if len(r):
+        hit = r["iou"] >= 0.9
+        print(f"Tier B eval boxes with a new box at IoU >= 0.9: {hit.mean():.1%} "
+              f"(conf >= 0.5 boxes: {hit[r['ref_conf'] >= 0.5].mean():.1%})")
+        print(f"|conf difference| for those: median {r.loc[hit, 'dconf'].abs().median():.4f}, "
+              f"95th pct {r.loc[hit, 'dconf'].abs().quantile(0.95):.4f}")
+        print("Small differences are expected (GPU model, FP16, batch size); misses concentrated near "
+              "conf 0.1 are threshold noise. Large gaps mean the crop or settings differ.")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--mode", choices=["probe", "infer", "combine"], required=True)
+    ap.add_argument("--mode", choices=["probe", "infer", "combine", "compare"], required=True)
     ap.add_argument("--manifest", required=True, help="manifest_2026.csv.gz from build_2026_manifest.py")
     ap.add_argument("--out_dir", required=True, help="Local output folder, e.g. D:/scallop2026_tierb")
     ap.add_argument("--weights", default="/c/Users/jeremy.jenrette/PEMAD-ESB-ScalPred/models/yolov12n_2022-2024_tierB.pt")
@@ -456,12 +525,13 @@ def main():
     ap.add_argument("--probe_n", type=int, default=20, help="Files per group x drive (and duplicate pairs)")
     ap.add_argument("--probe_model", action="store_true", help="Also load the model and time one batch")
     ap.add_argument("--seed", type=int, default=2026)
+    ap.add_argument("--ref_csv", default="", help="compare: autotest_tierb2026_*.csv from the Tier B evaluation")
     a = ap.parse_args()
 
     t = time.perf_counter()
     man = load_manifest(a.manifest)
     print(f"Manifest: {len(man):,} rows ({time.perf_counter()-t:.0f}s)")
-    {"probe": run_probe, "infer": run_infer, "combine": run_combine}[a.mode](a, man)
+    {"probe": run_probe, "infer": run_infer, "combine": run_combine, "compare": run_compare}[a.mode](a, man)
 
 
 if __name__ == "__main__":
