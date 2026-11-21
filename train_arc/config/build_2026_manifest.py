@@ -24,23 +24,34 @@ is_preferred_copy   one True per imagename (copy on --prefer drive when duplicat
                     for one-row-per-image analyses
 annotated_2026      imagename is in the --annotated_csv list (e.g. tierb_manifest.csv)
 exclude_reason      non-empty rows are never processed (unparseable name, "(Copy)" files, ...)
-frame_keep          imagename kept by the frame thinning (--frame_step, default every 5th frame
-                    across V and W; annotated images always kept; preferred-drive frames chosen first)
-selected            row is processed (not excluded, frame_keep, and --scope)
-chunk_id            processing chunk (1..N) for selected rows, ordered habcam_primary first,
-                    then auv, then pre_survey; within a group by date, time, drive, so both
-                    copies of a duplicate land in the same chunk
+frame_keep          imagename is in the every-Nth-frame subset (--frame_step 5: across V and W,
+                    preferred-drive frames chosen first). With --done_chunks from the earlier
+                    every-5th run, it is taken from that run instead of recomputed, so it marks
+                    exactly the images that run processed.
+selected            row is processed: not excluded, --scope, and frame_keep if --select frames
+                    (--select all = every file)
+pass_id             1 = already processed (found in --done_chunks), 2 = new in this manifest
+chunk_id            processing chunk for selected rows. Already-processed rows keep their old
+                    chunk; new rows get chunks numbered after the last old one, ordered
+                    habcam_primary, auv, pre_survey, then date, time, drive (a chunk never spans
+                    two groups, and both copies of a duplicate share a chunk)
+
+Adding files to a finished run: rebuild with --select all --done_chunks <out_dir>/chunks.
+infer_2026_full.py then runs only the new chunks; combine merges old and new.
 
 Usage (Git Bash on the GPU server; see job/infer_2026_full.sh)
     python config/build_2026_manifest.py \
         --inv V /path/img_inventory_2026_fullpaths_v.txt \
         --inv W /path/img_inventory_2026_fullpaths_w.txt \
-        --out_dir D:/scallop2026_tierb --chunk_size 10000 --scope all
+        --out_dir D:/scallop2026_tierb --chunk_size 10000 --scope all \
+        --select all --done_chunks D:/scallop2026_tierb/chunks
 """
 from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import time
 import os
 import re
 import sys
@@ -138,6 +149,11 @@ def main():
                     help="Keep about every Nth camera frame across all drives (>= N frames apart); 0/1 = keep all")
     ap.add_argument("--keep_annotated", type=int, default=1,
                     help="1 = annotated images (--annotated_csv) are always kept by the frame thinning")
+    ap.add_argument("--select", choices=["frames", "all"], default="frames",
+                    help="frames = only the every-Nth-frame subset (frame_keep); all = every file")
+    ap.add_argument("--done_chunks", default="",
+                    help="Chunk folder of an earlier run (images_c*.csv): those files keep their chunk "
+                         "and are not processed again; only the rest get new chunks")
     ap.add_argument("--exclude_regex", default=r"\(copy\)|\s",
                     help="Imagenames matching this (case-insensitive) are excluded")
     a = ap.parse_args()
@@ -195,9 +211,30 @@ def main():
     else:
         df["annotated_2026"] = False
 
+    # --- files already processed by an earlier run
+    done = pd.DataFrame(columns=["image_uid", "chunk_id"])
+    dd = Path(to_native(a.done_chunks)) if a.done_chunks else None
+    if dd and dd.is_dir():
+        files = sorted(dd.glob("images_c*.csv"))
+        if files:
+            done = pd.concat((pd.read_csv(f, usecols=["image_uid", "chunk_id"]) for f in files), ignore_index=True)
+            done = done.drop_duplicates("image_uid")
+            print(f"Already processed: {len(done):,} files in {done['chunk_id'].nunique()} chunks under {dd} "
+                  f"(last chunk {int(done['chunk_id'].max())})")
+    df["image_uid"] = df["drive"] + ":" + df["imagename"]
+    unknown = set(done["image_uid"]) - set(df["image_uid"])
+    if unknown:
+        print(f"WARNING: {len(unknown):,} processed files are not in these inventories, e.g. {sorted(unknown)[:3]}")
+    df["pass_id"] = pd.array(np.where(df["image_uid"].isin(set(done["image_uid"])), 1, 2), dtype="Int64")
+
     # --- frame thinning on the union of drives
     okdf = df[df["exclude_reason"].eq("")]
-    if a.frame_step and a.frame_step > 1:
+    if len(done) and a.frame_step and a.frame_step > 1:
+        done_names = set(df.loc[df["pass_id"].eq(1), "imagename"])
+        df["frame_keep"] = df["imagename"].isin(done_names)
+        print(f"frame_keep taken from the earlier run: {len(done_names):,} unique images "
+              f"(the every-{a.frame_step}th-frame subset it processed)")
+    elif a.frame_step and a.frame_step > 1:
         u = okdf.sort_values("_prefrank").drop_duplicates("imagename")[["imagename", "date", "time", "frame", "drive"]].copy()
         on_pref = set(okdf.loc[okdf["drive"].eq(pref), "imagename"])
         ann_names = set(okdf.loc[okdf["annotated_2026"], "imagename"]) if a.keep_annotated else set()
@@ -214,26 +251,38 @@ def main():
         df["frame_keep"] = True
 
     # --- selection and chunks
-    df["selected"] = (df["exclude_reason"].eq("") & df["frame_keep"]
+    df["selected"] = (df["exclude_reason"].eq("")
+                      & (df["frame_keep"] if a.select == "frames" else True)
                       & (df["is_preferred_copy"] if a.scope == "preferred" else True))
+    df.loc[df["pass_id"].eq(1), "selected"] = True        # processed files stay in the run
+    if len(done) == 0:
+        df.loc[df["selected"], "pass_id"] = 1
+        df.loc[~df["selected"], "pass_id"] = pd.NA
+    else:
+        df.loc[~df["selected"], "pass_id"] = pd.NA
     df["_g"] = df["group"].map(GROUP_ORDER).fillna(9)
     df = df.sort_values(["_g", "date", "time", "frame", "drive"], na_position="last").reset_index(drop=True)
+    # processed files keep their chunk; new ones are numbered after the last old chunk.
     # chunks never span two groups, so running one group (--groups) never half-finishes a chunk
-    df["chunk_id"] = pd.array([pd.NA] * len(df), dtype="Int64")
-    offset = 0
+    df["chunk_id"] = pd.array(df["image_uid"].map(done.set_index("image_uid")["chunk_id"]), dtype="Int64")
+    offset = int(done["chunk_id"].max()) if len(done) else 0
+    new_rows = df["selected"] & df["chunk_id"].isna()
     for g in sorted(df["group"].unique(), key=lambda x: GROUP_ORDER.get(x, 9)):
-        idx = df.index[df["selected"] & df["group"].eq(g)]
+        idx = df.index[new_rows & df["group"].eq(g)]
         if len(idx):
             k = np.arange(len(idx)) // a.chunk_size
             df.loc[idx, "chunk_id"] = offset + k + 1
             offset += int(k.max()) + 1
-    df["image_uid"] = df["drive"] + ":" + df["imagename"]
 
     cols = ["image_uid", "imagename", "drive", "src_path", "cruise", "date", "month", "time", "datetime",
             "frame", "group", "n_copies", "is_duplicate", "other_drives", "color_corrected_assumed",
-            "is_preferred_copy", "annotated_2026", "exclude_reason", "frame_keep", "selected", "chunk_id"]
+            "is_preferred_copy", "annotated_2026", "exclude_reason", "frame_keep", "selected", "pass_id", "chunk_id"]
     df = df[cols]
     man_path = out / "manifest_2026.csv.gz"
+    if man_path.exists():  # keep the manifest the earlier chunks were built from
+        bak = out / f"manifest_2026_{time.strftime('%Y%m%d_%H%M%S')}.csv.gz"
+        shutil.copy2(man_path, bak)
+        print(f"Previous manifest kept as {bak.name}")
     df.to_csv(man_path, index=False, compression="gzip")
 
     # --- summary
@@ -252,9 +301,14 @@ def main():
     for _, r in df[df["exclude_reason"].ne("")].head(10).iterrows():
         print(f"   {r['exclude_reason']}: {r['src_path']}")
     n_chunks = int(df["chunk_id"].max()) if df["selected"].any() else 0
-    cg = df[df["selected"]].groupby("group")["chunk_id"].agg(["min", "max"])
-    print(f"\nScope '{a.scope}': {int(df['selected'].sum()):,} files in {n_chunks} chunks of <= {a.chunk_size:,}")
-    print(cg.rename(columns={"min": "first_chunk", "max": "last_chunk"}).to_string())
+    sel = df[df["selected"]]
+    cg = sel.groupby(["pass_id", "group"]).agg(files=("chunk_id", "size"), first_chunk=("chunk_id", "min"),
+                                               last_chunk=("chunk_id", "max"))
+    print(f"\nSelect '{a.select}', scope '{a.scope}': {len(sel):,} files in chunks 1-{n_chunks} "
+          f"(<= {a.chunk_size:,} per chunk);  already processed: {int(sel['pass_id'].eq(1).sum()):,};  "
+          f"new: {int(sel['pass_id'].eq(2).sum()):,}")
+    print("pass_id 1 = processed earlier, 2 = new")
+    print(cg.to_string())
 
     by.to_csv(out / "manifest_2026_summary.csv", index=False)
     (out / "manifest_2026_config.json").write_text(json.dumps(

@@ -178,7 +178,8 @@ def prefetch(rows, fn, workers: int, depth: int):
 def load_manifest(path: str) -> pd.DataFrame:
     m = pd.read_csv(to_native(path), dtype=MAN_DTYPES, low_memory=False, keep_default_na=False,
                     na_values={"chunk_id": [""], "frame": [""]})
-    for c in ("is_duplicate", "color_corrected_assumed", "is_preferred_copy", "annotated_2026", "selected"):
+    for c in ("is_duplicate", "color_corrected_assumed", "is_preferred_copy", "annotated_2026", "selected",
+              "frame_keep"):
         if c in m and m[c].dtype == object:
             m[c] = m[c].astype(str).str.lower().eq("true")
     m["chunk_id"] = pd.to_numeric(m["chunk_id"], errors="coerce").astype("Int64")
@@ -435,8 +436,9 @@ def run_combine(a, man: pd.DataFrame):
     im = pd.concat((pd.read_csv(p, low_memory=False) for p in imgs), ignore_index=True)
     dets = [cdir / p.name.replace("images_", "dets_") for p in imgs]
     de = pd.concat((pd.read_csv(p, low_memory=False) for p in dets if p.exists()), ignore_index=True)
-    keep = ["image_uid", "date", "time", "datetime", "frame", "is_duplicate", "other_drives",
-            "color_corrected_assumed", "is_preferred_copy", "annotated_2026"]
+    keep = [c for c in ["image_uid", "date", "time", "datetime", "frame", "is_duplicate", "other_drives",
+                        "color_corrected_assumed", "is_preferred_copy", "annotated_2026", "frame_keep",
+                        "pass_id"] if c in man.columns]
     im = im.merge(man[keep], on="image_uid", how="left")
     im.to_csv(out / "images_2026_all.csv.gz", index=False, compression="gzip")
     de.to_csv(out / "detections_2026_all.csv.gz", index=False, compression="gzip")

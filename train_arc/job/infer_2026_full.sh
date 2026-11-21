@@ -48,7 +48,9 @@ CHUNK_SIZE="${CHUNK_SIZE:-10000}"
 SCOPE="${SCOPE:-all}"                  # all = both copies of V/W duplicates; preferred = one per image
 PREFER="${PREFER:-V}"                  # copy kept as 'preferred' when an image is on both drives
 CORRECTED_DRIVES="${CORRECTED_DRIVES:-V}"   # assumption, checked by STEP=probe
-FRAME_STEP="${FRAME_STEP:-5}"          # keep ~every 5th camera frame across V+W (0 = every image)
+FRAME_STEP="${FRAME_STEP:-5}"          # defines the every-5th-frame subset (column frame_keep)
+SELECT="${SELECT:-all}"                # all = process every image; frames = only the frame_keep subset
+# Files already processed (images_c*.csv in $OUT/chunks) always keep their chunk and are never redone.
 
 # ─── Throughput / selection ───────────────────────────────────────────────────
 DEVICE="${DEVICE:-0}"; BATCH="${BATCH:-32}"; WORKERS="${WORKERS:-8}"
@@ -85,7 +87,8 @@ case "$STEP" in
     "$PY" -u "$CONFIG_DIR/build_2026_manifest.py" \
       --inv V "$INV_V" --inv W "$INV_W" --out_dir "$OUT" \
       --chunk_size "$CHUNK_SIZE" --scope "$SCOPE" --prefer "$PREFER" \
-      --corrected_drives "$CORRECTED_DRIVES" --frame_step "$FRAME_STEP" "${ANN_ARGS[@]}" 2>&1 | tee "$LOG"
+      --corrected_drives "$CORRECTED_DRIVES" --frame_step "$FRAME_STEP" --select "$SELECT" \
+      --done_chunks "$OUT/chunks" "${ANN_ARGS[@]}" 2>&1 | tee "$LOG"
     ;;
   probe)
     "$PY" -u "$CONFIG_DIR/infer_2026_full.py" --mode probe --manifest "$MANIFEST" --out_dir "$OUT" \
